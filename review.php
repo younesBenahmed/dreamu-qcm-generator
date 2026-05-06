@@ -35,7 +35,7 @@ if ($action === 'importall' && confirm_sesskey()) {
     $ids = array_keys($approved);
     if (!empty($ids)) {
         $count = \local_dreamu_qcm\qcm_generator::import_to_bank($courseid, $ids);
-        redirect($PAGE->url, "{$count} questions imported to question bank!", null, \core\output\notification::NOTIFY_SUCCESS);
+        redirect($PAGE->url, "{$count} questions importées dans la banque de questions !", null, \core\output\notification::NOTIFY_SUCCESS);
     }
 }
 
@@ -177,9 +177,9 @@ function render_truefalse($q) {
     $istrue = ($q->correct === 'true');
     echo '<div class="mb-2">';
     echo '<span class="badge badge-' . ($istrue ? 'success bg-success' : 'secondary bg-secondary') . ' p-2 mr-2">';
-    echo 'TRUE' . ($istrue ? ' (correct)' : '') . '</span>';
+    echo 'VRAI' . ($istrue ? ' (correct)' : '') . '</span>';
     echo '<span class="badge badge-' . (!$istrue ? 'success bg-success' : 'secondary bg-secondary') . ' p-2">';
-    echo 'FALSE' . (!$istrue ? ' (correct)' : '') . '</span>';
+    echo 'FAUX' . (!$istrue ? ' (correct)' : '') . '</span>';
     echo '</div>';
 }
 
