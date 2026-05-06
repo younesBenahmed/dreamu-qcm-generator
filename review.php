@@ -29,10 +29,8 @@ if ($action === 'approveall' && confirm_sesskey()) {
         "courseid = :courseid AND status = 'pending'", ['courseid' => $courseid]);
 }
 if ($action === 'importall' && confirm_sesskey()) {
-    // First approve all pending.
     $DB->set_field_select('local_dreamu_qcm', 'status', 'approved',
         "courseid = :courseid AND status = 'pending'", ['courseid' => $courseid]);
-    // Import approved.
     $approved = $DB->get_records('local_dreamu_qcm', ['courseid' => $courseid, 'status' => 'approved']);
     $ids = array_keys($approved);
     if (!empty($ids)) {
@@ -43,7 +41,7 @@ if ($action === 'importall' && confirm_sesskey()) {
 
 echo $OUTPUT->header();
 
-// Get pending questions.
+// Get all questions.
 $questions = $DB->get_records('local_dreamu_qcm', ['courseid' => $courseid], 'timecreated DESC');
 
 $pending = array_filter($questions, fn($q) => $q->status === 'pending');
@@ -51,65 +49,172 @@ $approved = array_filter($questions, fn($q) => $q->status === 'approved');
 $imported = array_filter($questions, fn($q) => $q->status === 'imported');
 
 echo '<h3>' . get_string('review_title', 'local_dreamu_qcm') . '</h3>';
-echo '<p>Pending: <strong>' . count($pending) . '</strong> | Approved: <strong>' . count($approved) . '</strong> | Imported: <strong>' . count($imported) . '</strong></p>';
+echo '<p>En attente : <strong>' . count($pending) . '</strong> | ';
+echo 'Approuvées : <strong>' . count($approved) . '</strong> | ';
+echo 'Importées : <strong>' . count($imported) . '</strong></p>';
+
+// Count by type.
+$typecounts = [];
+foreach ($questions as $q) {
+    if ($q->status === 'rejected' || $q->status === 'imported') continue;
+    $t = $q->qtype ?? 'multichoice';
+    $typecounts[$t] = ($typecounts[$t] ?? 0) + 1;
+}
+if (!empty($typecounts)) {
+    echo '<p>';
+    $typelabels = [
+        'multichoice' => 'QCM',
+        'truefalse' => 'Vrai/Faux',
+        'shortanswer' => 'Réponse courte',
+        'matching' => 'Correspondance',
+        'numerical' => 'Numérique',
+    ];
+    $parts = [];
+    foreach ($typecounts as $type => $cnt) {
+        $label = $typelabels[$type] ?? $type;
+        $parts[] = "{$label}: {$cnt}";
+    }
+    echo implode(' | ', $parts);
+    echo '</p>';
+}
 
 if (!empty($pending) || !empty($approved)) {
     $importurl = new moodle_url($PAGE->url, ['action' => 'importall', 'sesskey' => sesskey()]);
     echo '<a href="' . $importurl . '" class="btn btn-success mb-3">' . get_string('approve_all', 'local_dreamu_qcm') . '</a> ';
 
     $genurl = new moodle_url('/local/dreamu_qcm/generate.php', ['courseid' => $courseid]);
-    echo '<a href="' . $genurl . '" class="btn btn-primary mb-3">Generate More</a>';
+    echo '<a href="' . $genurl . '" class="btn btn-primary mb-3">Générer plus</a>';
 }
-
-$letters = ['a' => 'A', 'b' => 'B', 'c' => 'C', 'd' => 'D'];
 
 foreach ($questions as $q) {
     if ($q->status === 'rejected' || $q->status === 'imported') continue;
 
+    $qtype = $q->qtype ?? 'multichoice';
+
     $statusbadge = [
-        'pending' => '<span class="badge badge-warning">Pending</span>',
-        'approved' => '<span class="badge badge-success">Approved</span>',
+        'pending' => '<span class="badge badge-warning bg-warning">En attente</span>',
+        'approved' => '<span class="badge badge-success bg-success">Approuvée</span>',
     ][$q->status] ?? '';
 
     $diffbadge = [
-        'easy' => '<span class="badge badge-info">Easy</span>',
-        'medium' => '<span class="badge badge-primary">Medium</span>',
-        'hard' => '<span class="badge badge-danger">Hard</span>',
+        'easy' => '<span class="badge badge-info bg-info">Facile</span>',
+        'medium' => '<span class="badge badge-primary bg-primary">Moyen</span>',
+        'hard' => '<span class="badge badge-danger bg-danger">Difficile</span>',
     ][$q->difficulty] ?? '';
+
+    $typebadge = [
+        'multichoice' => '<span class="badge badge-secondary bg-secondary">QCM</span>',
+        'truefalse' => '<span class="badge badge-dark bg-dark text-white">Vrai/Faux</span>',
+        'shortanswer' => '<span class="badge badge-light bg-light text-dark border">Réponse courte</span>',
+        'matching' => '<span class="badge badge-info bg-info">Correspondance</span>',
+        'numerical' => '<span class="badge badge-warning bg-warning">Numérique</span>',
+    ][$qtype] ?? '<span class="badge badge-secondary">' . $qtype . '</span>';
 
     echo '<div class="card mb-3">';
     echo '<div class="card-header d-flex justify-content-between">';
-    echo '<strong>Q' . $q->id . '</strong> ' . $diffbadge . ' ' . $statusbadge;
+    echo '<span><strong>Q' . $q->id . '</strong> ' . $typebadge . ' ' . $diffbadge . ' ' . $statusbadge . '</span>';
     echo '</div>';
     echo '<div class="card-body">';
     echo '<p class="card-text"><strong>' . format_string($q->question) . '</strong></p>';
 
-    $options = ['a' => $q->optiona, 'b' => $q->optionb, 'c' => $q->optionc, 'd' => $q->optiond];
-    echo '<ul class="list-group mb-2">';
-    foreach ($options as $letter => $text) {
-        $class = ($letter === $q->correct) ? 'list-group-item list-group-item-success' : 'list-group-item';
-        $mark = ($letter === $q->correct) ? ' ✅' : '';
-        echo '<li class="' . $class . '"><strong>' . $letters[$letter] . ')</strong> ' . format_string($text) . $mark . '</li>';
+    // Render based on type.
+    switch ($qtype) {
+        case 'multichoice':
+            render_multichoice($q);
+            break;
+        case 'truefalse':
+            render_truefalse($q);
+            break;
+        case 'shortanswer':
+            render_shortanswer($q);
+            break;
+        case 'matching':
+            render_matching($q);
+            break;
+        case 'numerical':
+            render_numerical($q);
+            break;
     }
-    echo '</ul>';
 
     if (!empty($q->explanation)) {
-        echo '<p class="text-muted"><em>💡 ' . format_string($q->explanation) . '</em></p>';
+        echo '<p class="text-muted mt-2"><em>' . format_string($q->explanation) . '</em></p>';
     }
 
     if ($q->status === 'pending') {
         $approveurl = new moodle_url($PAGE->url, ['action' => 'approve', 'qid' => $q->id, 'sesskey' => sesskey()]);
         $rejecturl = new moodle_url($PAGE->url, ['action' => 'reject', 'qid' => $q->id, 'sesskey' => sesskey()]);
-        echo '<a href="' . $approveurl . '" class="btn btn-sm btn-success">✅ Approve</a> ';
-        echo '<a href="' . $rejecturl . '" class="btn btn-sm btn-danger">❌ Reject</a>';
+        echo '<a href="' . $approveurl . '" class="btn btn-sm btn-success">Approuver</a> ';
+        echo '<a href="' . $rejecturl . '" class="btn btn-sm btn-danger">Rejeter</a>';
     }
 
     echo '</div></div>';
 }
 
 if (empty($questions)) {
-    echo '<div class="alert alert-info">No questions generated yet. ';
-    echo '<a href="' . new moodle_url('/local/dreamu_qcm/generate.php', ['courseid' => $courseid]) . '">Generate some!</a></div>';
+    echo '<div class="alert alert-info">Aucune question générée pour le moment. ';
+    echo '<a href="' . new moodle_url('/local/dreamu_qcm/generate.php', ['courseid' => $courseid]) . '">Générer des questions !</a></div>';
 }
 
 echo $OUTPUT->footer();
+
+// --- Render functions ---
+
+function render_multichoice($q) {
+    $letters = ['a' => 'A', 'b' => 'B', 'c' => 'C', 'd' => 'D'];
+    $options = ['a' => $q->optiona, 'b' => $q->optionb, 'c' => $q->optionc, 'd' => $q->optiond];
+    echo '<ul class="list-group mb-2">';
+    foreach ($options as $letter => $text) {
+        $class = ($letter === $q->correct) ? 'list-group-item list-group-item-success' : 'list-group-item';
+        echo '<li class="' . $class . '"><strong>' . $letters[$letter] . ')</strong> ' . format_string($text) . '</li>';
+    }
+    echo '</ul>';
+}
+
+function render_truefalse($q) {
+    $istrue = ($q->correct === 'true');
+    echo '<div class="mb-2">';
+    echo '<span class="badge badge-' . ($istrue ? 'success bg-success' : 'secondary bg-secondary') . ' p-2 mr-2">';
+    echo 'TRUE' . ($istrue ? ' (correct)' : '') . '</span>';
+    echo '<span class="badge badge-' . (!$istrue ? 'success bg-success' : 'secondary bg-secondary') . ' p-2">';
+    echo 'FALSE' . (!$istrue ? ' (correct)' : '') . '</span>';
+    echo '</div>';
+}
+
+function render_shortanswer($q) {
+    echo '<div class="mb-2">';
+    echo '<span class="badge badge-success bg-success p-2">Réponse : ' . format_string($q->correct) . '</span>';
+    $extra = json_decode($q->extra_data ?? '{}', true);
+    $alts = $extra['alternatives'] ?? [];
+    if (!empty($alts)) {
+        echo '<br><small class="text-muted">Aussi accepté : ' . implode(', ', array_map('format_string', $alts)) . '</small>';
+    }
+    echo '</div>';
+}
+
+function render_matching($q) {
+    $extra = json_decode($q->extra_data ?? '{}', true);
+    $pairs = $extra['pairs'] ?? [];
+    if (!empty($pairs)) {
+        echo '<table class="table table-bordered table-sm mb-2">';
+        echo '<thead><tr><th>Terme</th><th>Définition</th></tr></thead><tbody>';
+        foreach ($pairs as $pair) {
+            echo '<tr><td><strong>' . format_string($pair['term'] ?? '') . '</strong></td>';
+            echo '<td>' . format_string($pair['definition'] ?? '') . '</td></tr>';
+        }
+        echo '</tbody></table>';
+    }
+}
+
+function render_numerical($q) {
+    $extra = json_decode($q->extra_data ?? '{}', true);
+    $tolerance = $extra['tolerance'] ?? 0;
+    $unit = $extra['unit'] ?? '';
+    echo '<div class="mb-2">';
+    echo '<span class="badge badge-success bg-success p-2">Réponse : ' . format_string($q->correct);
+    if (!empty($unit)) echo ' ' . format_string($unit);
+    echo '</span>';
+    if ($tolerance > 0) {
+        echo ' <small class="text-muted">(tolérance : +/- ' . $tolerance . ')</small>';
+    }
+    echo '</div>';
+}

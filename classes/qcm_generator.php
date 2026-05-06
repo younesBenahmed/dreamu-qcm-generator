@@ -3,9 +3,6 @@ namespace local_dreamu_qcm;
 
 defined('MOODLE_INTERNAL') || die();
 
-/**
- * Generates QCM questions using AI.
- */
 class qcm_generator {
 
     private string $endpoint;
@@ -25,42 +22,216 @@ class qcm_generator {
     }
 
     /**
-     * Generate QCM questions from course content.
+     * Generate diverse questions from course content.
      *
-     * @param string $content The course content text
-     * @param int $numquestions Number of questions to generate
+     * @param string $content Course content text
+     * @param int $numquestions Total number of questions
      * @param string $difficulty easy|medium|hard
      * @param string $language fr|en
-     * @return array List of question objects
+     * @param array $qtypes List of question types to generate
+     * @return array List of question objects with ->qtype
      */
-    public function generate(string $content, int $numquestions = 10, string $difficulty = 'medium', string $language = 'fr'): array {
+    public function generate(string $content, int $numquestions = 10, string $difficulty = 'medium',
+                             string $language = 'fr', array $qtypes = ['multichoice']): array {
         $langname = ($language === 'fr') ? 'French' : 'English';
-        $diffname = ['easy' => 'easy (basic recall)', 'medium' => 'medium (understanding)', 'hard' => 'hard (analysis/application)'][$difficulty] ?? 'medium';
+        $diffname = [
+            'easy' => 'easy (basic recall, definitions)',
+            'medium' => 'medium (understanding, comparison)',
+            'hard' => 'hard (analysis, application, problem-solving)',
+        ][$difficulty] ?? 'medium';
 
-        // Truncate content if too long
         if (strlen($content) > 25000) {
             $content = substr($content, 0, 25000) . "\n[... content truncated ...]";
         }
 
-        $system = "You are a university professor creating exam questions. "
-            . "Based on the course content provided, generate EXACTLY {$numquestions} multiple choice questions. "
-            . "Difficulty: {$diffname}. Language: {$langname}.\n\n"
-            . "Respond ONLY in JSON array format:\n"
-            . "[{\"question\": \"...\", \"a\": \"...\", \"b\": \"...\", \"c\": \"...\", \"d\": \"...\", \"correct\": \"a\", \"explanation\": \"...\"}]\n\n"
-            . "Rules:\n"
-            . "- Each question has EXACTLY 4 options (a, b, c, d)\n"
-            . "- 'correct' is the letter of the right answer (a, b, c, or d)\n"
-            . "- 'explanation' explains WHY the answer is correct\n"
-            . "- Questions must be DIRECTLY based on the course content provided\n"
-            . "- Vary question types: definitions, comparisons, applications, true/false reworded as MCQ\n"
-            . "- Wrong answers must be plausible (not obviously wrong)\n"
-            . "- All text in {$langname}";
+        // Distribute questions across types.
+        $distribution = $this->distribute_questions($numquestions, $qtypes);
 
-        $user = "Course content:\n\n{$content}\n\nGenerate {$numquestions} QCM questions in JSON:";
+        $allquestions = [];
 
-        $response = $this->call_api($system, $user);
+        foreach ($distribution as $qtype => $count) {
+            if ($count <= 0) continue;
 
-        return $this->parse_questions($response);
+            $prompt = $this->build_prompt($qtype, $count, $diffname, $langname);
+            $user = "Course content:\n\n{$content}\n\nGenerate {$count} questions in JSON:";
+
+            try {
+                $response = $this->call_api($prompt, $user);
+                $parsed = $this->parse_questions($response, $qtype);
+                $allquestions = array_merge($allquestions, $parsed);
+            } catch (\Exception $e) {
+                // If one type fails, continue with others.
+                debugging("QCM generation failed for type {$qtype}: " . $e->getMessage(), DEBUG_DEVELOPER);
+            }
+        }
+
+        return $allquestions;
+    }
+
+    /**
+     * Distribute questions across types.
+     */
+    private function distribute_questions(int $total, array $qtypes): array {
+        $count = count($qtypes);
+        if ($count === 0) return ['multichoice' => $total];
+
+        $base = intdiv($total, $count);
+        $remainder = $total % $count;
+
+        $distribution = [];
+        foreach ($qtypes as $i => $type) {
+            $distribution[$type] = $base + ($i < $remainder ? 1 : 0);
+        }
+
+        return $distribution;
+    }
+
+    /**
+     * Build the system prompt for each question type.
+     */
+    private function build_prompt(string $qtype, int $count, string $diffname, string $langname): string {
+        $base = "You are a university professor creating exam questions. "
+            . "Difficulty: {$diffname}. Language: {$langname}. "
+            . "Respond ONLY in valid JSON array format. ";
+
+        switch ($qtype) {
+            case 'multichoice':
+                return $base . "Generate EXACTLY {$count} multiple choice questions.\n"
+                    . "Format: [{\"type\": \"multichoice\", \"question\": \"...\", \"a\": \"...\", \"b\": \"...\", \"c\": \"...\", \"d\": \"...\", \"correct\": \"a\", \"explanation\": \"...\"}]\n"
+                    . "Rules:\n"
+                    . "- 4 options (a, b, c, d), 'correct' = letter of right answer\n"
+                    . "- Wrong answers must be plausible\n"
+                    . "- All text in {$langname}";
+
+            case 'truefalse':
+                return $base . "Generate EXACTLY {$count} true/false questions.\n"
+                    . "Format: [{\"type\": \"truefalse\", \"question\": \"...\", \"correct\": true, \"explanation\": \"...\"}]\n"
+                    . "Rules:\n"
+                    . "- 'correct' is true or false (boolean)\n"
+                    . "- Questions should be clear statements that are definitively true or false\n"
+                    . "- Mix true and false answers (not all the same)\n"
+                    . "- All text in {$langname}";
+
+            case 'shortanswer':
+                return $base . "Generate EXACTLY {$count} short answer questions.\n"
+                    . "Format: [{\"type\": \"shortanswer\", \"question\": \"...\", \"correct\": \"the answer\", \"alternatives\": [\"alt1\", \"alt2\"], \"explanation\": \"...\"}]\n"
+                    . "Rules:\n"
+                    . "- 'correct' is the main expected answer (1-3 words)\n"
+                    . "- 'alternatives' are other acceptable answers (synonyms, abbreviations)\n"
+                    . "- Questions should have a clear, unambiguous short answer\n"
+                    . "- Good for: definitions, names, specific terms, formulas\n"
+                    . "- All text in {$langname}";
+
+            case 'matching':
+                return $base . "Generate EXACTLY {$count} matching questions.\n"
+                    . "Format: [{\"type\": \"matching\", \"question\": \"Match the following:\", \"pairs\": [{\"term\": \"...\", \"definition\": \"...\"}], \"explanation\": \"...\"}]\n"
+                    . "Rules:\n"
+                    . "- Each question has 4-6 pairs of term/definition\n"
+                    . "- Terms on the left, definitions on the right\n"
+                    . "- Good for: vocabulary, concept-definition, cause-effect\n"
+                    . "- All text in {$langname}";
+
+            case 'numerical':
+                return $base . "Generate EXACTLY {$count} numerical answer questions.\n"
+                    . "Format: [{\"type\": \"numerical\", \"question\": \"...\", \"correct\": 42.5, \"tolerance\": 0.1, \"unit\": \"kg\", \"explanation\": \"...\"}]\n"
+                    . "Rules:\n"
+                    . "- 'correct' is the numeric answer\n"
+                    . "- 'tolerance' is the acceptable margin of error\n"
+                    . "- 'unit' is the expected unit (optional)\n"
+                    . "- Good for: calculations, measurements, quantities\n"
+                    . "- All text in {$langname}";
+
+            default:
+                return $base . "Generate EXACTLY {$count} multiple choice questions.\n"
+                    . "Format: [{\"type\": \"multichoice\", \"question\": \"...\", \"a\": \"...\", \"b\": \"...\", \"c\": \"...\", \"d\": \"...\", \"correct\": \"a\", \"explanation\": \"...\"}]";
+        }
+    }
+
+    /**
+     * Parse AI response for a specific question type.
+     */
+    private function parse_questions(string $response, string $qtype): array {
+        $json = $response;
+        if (preg_match('/```(?:json)?\s*(\[.+\])\s*```/s', $response, $matches)) {
+            $json = $matches[1];
+        } elseif (preg_match('/(\[[\s\S]*\])/s', $response, $matches)) {
+            $json = $matches[1];
+        }
+
+        $questions = json_decode($json, true);
+        if (!is_array($questions)) {
+            throw new \moodle_exception('parse_error', 'local_dreamu_qcm', '', null,
+                "Could not parse questions: " . substr($response, 0, 500));
+        }
+
+        $parsed = [];
+        foreach ($questions as $q) {
+            if (!isset($q['question'])) continue;
+
+            $obj = new \stdClass();
+            $obj->qtype = $qtype;
+            $obj->question = $q['question'];
+            $obj->explanation = $q['explanation'] ?? '';
+
+            switch ($qtype) {
+                case 'multichoice':
+                    if (!isset($q['a'], $q['b'], $q['c'], $q['d'], $q['correct'])) continue 2;
+                    $obj->optiona = $q['a'];
+                    $obj->optionb = $q['b'];
+                    $obj->optionc = $q['c'];
+                    $obj->optiond = $q['d'];
+                    $obj->correct = strtolower(substr($q['correct'], 0, 1));
+                    $obj->extra_data = null;
+                    break;
+
+                case 'truefalse':
+                    $obj->optiona = '';
+                    $obj->optionb = '';
+                    $obj->optionc = '';
+                    $obj->optiond = '';
+                    $obj->correct = (!empty($q['correct']) && $q['correct'] !== 'false') ? 'true' : 'false';
+                    $obj->extra_data = null;
+                    break;
+
+                case 'shortanswer':
+                    $obj->optiona = '';
+                    $obj->optionb = '';
+                    $obj->optionc = '';
+                    $obj->optiond = '';
+                    $obj->correct = $q['correct'] ?? '';
+                    $obj->extra_data = json_encode([
+                        'alternatives' => $q['alternatives'] ?? [],
+                    ]);
+                    break;
+
+                case 'matching':
+                    $obj->optiona = '';
+                    $obj->optionb = '';
+                    $obj->optionc = '';
+                    $obj->optiond = '';
+                    $obj->correct = '';
+                    $obj->extra_data = json_encode([
+                        'pairs' => $q['pairs'] ?? [],
+                    ]);
+                    break;
+
+                case 'numerical':
+                    $obj->optiona = '';
+                    $obj->optionb = '';
+                    $obj->optionc = '';
+                    $obj->optiond = '';
+                    $obj->correct = strval($q['correct'] ?? 0);
+                    $obj->extra_data = json_encode([
+                        'tolerance' => $q['tolerance'] ?? 0.01,
+                        'unit' => $q['unit'] ?? '',
+                    ]);
+                    break;
+            }
+
+            $parsed[] = $obj;
+        }
+
+        return $parsed;
     }
 
     /**
@@ -111,48 +282,8 @@ class qcm_generator {
     }
 
     /**
-     * Parse AI response into question objects.
-     */
-    private function parse_questions(string $response): array {
-        // Try to extract JSON array from response
-        $json = $response;
-        if (preg_match('/```(?:json)?\s*(\[.+\])\s*```/s', $response, $matches)) {
-            $json = $matches[1];
-        } elseif (preg_match('/(\[[\s\S]*"question"[\s\S]*\])/s', $response, $matches)) {
-            $json = $matches[1];
-        }
-
-        $questions = json_decode($json, true);
-        if (!is_array($questions)) {
-            throw new \moodle_exception('parse_error', 'local_dreamu_qcm', '', null,
-                "Could not parse questions: " . substr($response, 0, 500));
-        }
-
-        $parsed = [];
-        foreach ($questions as $q) {
-            if (!isset($q['question'], $q['a'], $q['b'], $q['c'], $q['d'], $q['correct'])) {
-                continue;
-            }
-            $obj = new \stdClass();
-            $obj->question = $q['question'];
-            $obj->optiona = $q['a'];
-            $obj->optionb = $q['b'];
-            $obj->optionc = $q['c'];
-            $obj->optiond = $q['d'];
-            $obj->correct = strtolower(substr($q['correct'], 0, 1));
-            $obj->explanation = $q['explanation'] ?? '';
-            $parsed[] = $obj;
-        }
-
-        return $parsed;
-    }
-
-    /**
      * Import approved questions into Moodle question bank.
-     *
-     * @param int $courseid
-     * @param array $questionids IDs from local_dreamu_qcm table
-     * @return int Number imported
+     * Handles all question types.
      */
     public static function import_to_bank(int $courseid, array $questionids): int {
         global $DB, $USER;
@@ -167,84 +298,251 @@ class qcm_generator {
         $imported = 0;
         foreach ($questionids as $qid) {
             $qcm = $DB->get_record('local_dreamu_qcm', ['id' => $qid]);
-            if (!$qcm || $qcm->status !== 'approved') {
-                continue;
+            if (!$qcm || $qcm->status !== 'approved') continue;
+
+            $qtype = $qcm->qtype ?? 'multichoice';
+
+            switch ($qtype) {
+                case 'multichoice':
+                    self::import_multichoice($DB, $category, $qcm);
+                    break;
+                case 'truefalse':
+                    self::import_truefalse($DB, $category, $qcm);
+                    break;
+                case 'shortanswer':
+                    self::import_shortanswer($DB, $category, $qcm);
+                    break;
+                case 'matching':
+                    self::import_matching($DB, $category, $qcm);
+                    break;
+                case 'numerical':
+                    self::import_numerical($DB, $category, $qcm);
+                    break;
+                default:
+                    self::import_multichoice($DB, $category, $qcm);
+                    break;
             }
 
-            // Create Moodle multichoice question.
-            $question = new \stdClass();
-            $question->category = $category->id;
-            $question->name = substr($qcm->question, 0, 80);
-            $question->questiontext = $qcm->question;
-            $question->questiontextformat = FORMAT_HTML;
-            $question->generalfeedback = $qcm->explanation ?: '';
-            $question->generalfeedbackformat = FORMAT_HTML;
-            $question->qtype = 'multichoice';
-            $question->defaultmark = 1;
-            $question->penalty = 0.3333333;
-            $question->length = 1;
-            $question->hidden = 0;
-            $question->createdby = $USER->id;
-            $question->modifiedby = $USER->id;
-            $question->timecreated = time();
-            $question->timemodified = time();
-
-            $question->id = $DB->insert_record('question', $question);
-
-            // Create question version and bank entry (Moodle 4.x).
-            $be = new \stdClass();
-            $be->questioncategoryid = $category->id;
-            $be->idnumber = null;
-            $be->ownerid = $USER->id;
-            $be->id = $DB->insert_record('question_bank_entries', $be);
-
-            $ver = new \stdClass();
-            $ver->questionbankentryid = $be->id;
-            $ver->version = 1;
-            $ver->questionid = $question->id;
-            $ver->status = 'ready';
-            $DB->insert_record('question_versions', $ver);
-
-            // Create multichoice options.
-            $mc = new \stdClass();
-            $mc->questionid = $question->id;
-            $mc->layout = 0;
-            $mc->single = 1;
-            $mc->shuffleanswers = 1;
-            $mc->correctfeedback = 'Correct!';
-            $mc->correctfeedbackformat = FORMAT_HTML;
-            $mc->partiallycorrectfeedback = '';
-            $mc->partiallycorrectfeedbackformat = FORMAT_HTML;
-            $mc->incorrectfeedback = 'Incorrect.';
-            $mc->incorrectfeedbackformat = FORMAT_HTML;
-            $mc->answernumbering = 'abc';
-            $mc->showstandardinstruction = 0;
-            $DB->insert_record('qtype_multichoice_options', $mc);
-
-            // Create answer options.
-            $options = [
-                'a' => $qcm->optiona,
-                'b' => $qcm->optionb,
-                'c' => $qcm->optionc,
-                'd' => $qcm->optiond,
-            ];
-
-            foreach ($options as $letter => $answertext) {
-                $answer = new \stdClass();
-                $answer->question = $question->id;
-                $answer->answer = $answertext;
-                $answer->answerformat = FORMAT_HTML;
-                $answer->fraction = ($letter === $qcm->correct) ? 1.0 : 0.0;
-                $answer->feedback = ($letter === $qcm->correct) ? ($qcm->explanation ?: 'Bonne réponse!') : '';
-                $answer->feedbackformat = FORMAT_HTML;
-                $DB->insert_record('question_answers', $answer);
-            }
-
-            // Mark as imported.
             $DB->set_field('local_dreamu_qcm', 'status', 'imported', ['id' => $qid]);
             $imported++;
         }
 
         return $imported;
+    }
+
+    private static function create_question_base($DB, $category, $qcm, string $qtype): \stdClass {
+        global $USER;
+
+        $question = new \stdClass();
+        $question->category = $category->id;
+        $question->name = substr($qcm->question, 0, 80);
+        $question->questiontext = $qcm->question;
+        $question->questiontextformat = FORMAT_HTML;
+        $question->generalfeedback = $qcm->explanation ?: '';
+        $question->generalfeedbackformat = FORMAT_HTML;
+        $question->qtype = $qtype;
+        $question->defaultmark = 1;
+        $question->penalty = 0.3333333;
+        $question->length = 1;
+        $question->hidden = 0;
+        $question->createdby = $USER->id;
+        $question->modifiedby = $USER->id;
+        $question->timecreated = time();
+        $question->timemodified = time();
+
+        $question->id = $DB->insert_record('question', $question);
+
+        // Create bank entry + version (Moodle 4.x).
+        $be = new \stdClass();
+        $be->questioncategoryid = $category->id;
+        $be->idnumber = null;
+        $be->ownerid = $USER->id;
+        $be->id = $DB->insert_record('question_bank_entries', $be);
+
+        $ver = new \stdClass();
+        $ver->questionbankentryid = $be->id;
+        $ver->version = 1;
+        $ver->questionid = $question->id;
+        $ver->status = 'ready';
+        $DB->insert_record('question_versions', $ver);
+
+        return $question;
+    }
+
+    private static function import_multichoice($DB, $category, $qcm): void {
+        $question = self::create_question_base($DB, $category, $qcm, 'multichoice');
+
+        $mc = new \stdClass();
+        $mc->questionid = $question->id;
+        $mc->layout = 0;
+        $mc->single = 1;
+        $mc->shuffleanswers = 1;
+        $mc->correctfeedback = 'Correct!';
+        $mc->correctfeedbackformat = FORMAT_HTML;
+        $mc->partiallycorrectfeedback = '';
+        $mc->partiallycorrectfeedbackformat = FORMAT_HTML;
+        $mc->incorrectfeedback = 'Incorrect.';
+        $mc->incorrectfeedbackformat = FORMAT_HTML;
+        $mc->answernumbering = 'abc';
+        $mc->showstandardinstruction = 0;
+        $DB->insert_record('qtype_multichoice_options', $mc);
+
+        $options = [
+            'a' => $qcm->optiona,
+            'b' => $qcm->optionb,
+            'c' => $qcm->optionc,
+            'd' => $qcm->optiond,
+        ];
+
+        foreach ($options as $letter => $answertext) {
+            $answer = new \stdClass();
+            $answer->question = $question->id;
+            $answer->answer = $answertext;
+            $answer->answerformat = FORMAT_HTML;
+            $answer->fraction = ($letter === $qcm->correct) ? 1.0 : 0.0;
+            $answer->feedback = ($letter === $qcm->correct) ? ($qcm->explanation ?: 'Bonne reponse!') : '';
+            $answer->feedbackformat = FORMAT_HTML;
+            $DB->insert_record('question_answers', $answer);
+        }
+    }
+
+    private static function import_truefalse($DB, $category, $qcm): void {
+        $question = self::create_question_base($DB, $category, $qcm, 'truefalse');
+
+        $istrue = ($qcm->correct === 'true');
+
+        // True answer.
+        $trueanswer = new \stdClass();
+        $trueanswer->question = $question->id;
+        $trueanswer->answer = 'True';
+        $trueanswer->answerformat = FORMAT_MOODLE;
+        $trueanswer->fraction = $istrue ? 1.0 : 0.0;
+        $trueanswer->feedback = $istrue ? ($qcm->explanation ?: '') : '';
+        $trueanswer->feedbackformat = FORMAT_HTML;
+        $trueid = $DB->insert_record('question_answers', $trueanswer);
+
+        // False answer.
+        $falseanswer = new \stdClass();
+        $falseanswer->question = $question->id;
+        $falseanswer->answer = 'False';
+        $falseanswer->answerformat = FORMAT_MOODLE;
+        $falseanswer->fraction = $istrue ? 0.0 : 1.0;
+        $falseanswer->feedback = !$istrue ? ($qcm->explanation ?: '') : '';
+        $falseanswer->feedbackformat = FORMAT_HTML;
+        $falseid = $DB->insert_record('question_answers', $falseanswer);
+
+        // Truefalse options.
+        $tf = new \stdClass();
+        $tf->question = $question->id;
+        $tf->trueanswer = $trueid;
+        $tf->falseanswer = $falseid;
+        $DB->insert_record('question_truefalse', $tf);
+    }
+
+    private static function import_shortanswer($DB, $category, $qcm): void {
+        $question = self::create_question_base($DB, $category, $qcm, 'shortanswer');
+
+        // Shortanswer options.
+        $sa = new \stdClass();
+        $sa->questionid = $question->id;
+        $sa->usecase = 0; // Case insensitive.
+        $DB->insert_record('qtype_shortanswer_options', $sa);
+
+        // Main answer.
+        $answer = new \stdClass();
+        $answer->question = $question->id;
+        $answer->answer = $qcm->correct;
+        $answer->answerformat = FORMAT_MOODLE;
+        $answer->fraction = 1.0;
+        $answer->feedback = $qcm->explanation ?: '';
+        $answer->feedbackformat = FORMAT_HTML;
+        $DB->insert_record('question_answers', $answer);
+
+        // Alternative answers.
+        $extra = json_decode($qcm->extra_data ?? '{}', true);
+        $alternatives = $extra['alternatives'] ?? [];
+        foreach ($alternatives as $alt) {
+            $altanswer = new \stdClass();
+            $altanswer->question = $question->id;
+            $altanswer->answer = $alt;
+            $altanswer->answerformat = FORMAT_MOODLE;
+            $altanswer->fraction = 1.0;
+            $altanswer->feedback = '';
+            $altanswer->feedbackformat = FORMAT_HTML;
+            $DB->insert_record('question_answers', $altanswer);
+        }
+
+        // Wildcard catch-all (0 points).
+        $wildcard = new \stdClass();
+        $wildcard->question = $question->id;
+        $wildcard->answer = '*';
+        $wildcard->answerformat = FORMAT_MOODLE;
+        $wildcard->fraction = 0.0;
+        $wildcard->feedback = 'Incorrect. ' . ($qcm->explanation ?: '');
+        $wildcard->feedbackformat = FORMAT_HTML;
+        $DB->insert_record('question_answers', $wildcard);
+    }
+
+    private static function import_matching($DB, $category, $qcm): void {
+        $question = self::create_question_base($DB, $category, $qcm, 'match');
+
+        // Match options.
+        $mo = new \stdClass();
+        $mo->questionid = $question->id;
+        $mo->shuffleanswers = 1;
+        $mo->correctfeedback = 'Correct!';
+        $mo->correctfeedbackformat = FORMAT_HTML;
+        $mo->partiallycorrectfeedback = 'Partially correct.';
+        $mo->partiallycorrectfeedbackformat = FORMAT_HTML;
+        $mo->incorrectfeedback = 'Incorrect.';
+        $mo->incorrectfeedbackformat = FORMAT_HTML;
+        $DB->insert_record('qtype_match_options', $mo);
+
+        // Add pairs as subquestions.
+        $extra = json_decode($qcm->extra_data ?? '{}', true);
+        $pairs = $extra['pairs'] ?? [];
+
+        foreach ($pairs as $pair) {
+            $sub = new \stdClass();
+            $sub->questionid = $question->id;
+            $sub->questiontext = $pair['term'] ?? '';
+            $sub->questiontextformat = FORMAT_HTML;
+            $sub->answertext = $pair['definition'] ?? '';
+            $DB->insert_record('qtype_match_subquestions', $sub);
+        }
+    }
+
+    private static function import_numerical($DB, $category, $qcm): void {
+        $question = self::create_question_base($DB, $category, $qcm, 'numerical');
+
+        $extra = json_decode($qcm->extra_data ?? '{}', true);
+        $tolerance = $extra['tolerance'] ?? 0.01;
+
+        // Answer.
+        $answer = new \stdClass();
+        $answer->question = $question->id;
+        $answer->answer = $qcm->correct;
+        $answer->answerformat = FORMAT_MOODLE;
+        $answer->fraction = 1.0;
+        $answer->feedback = $qcm->explanation ?: '';
+        $answer->feedbackformat = FORMAT_HTML;
+        $answerid = $DB->insert_record('question_answers', $answer);
+
+        // Numerical options.
+        $num = new \stdClass();
+        $num->question = $question->id;
+        $num->answer = $answerid;
+        $num->tolerance = $tolerance;
+        $DB->insert_record('question_numerical', $num);
+
+        // Unit if specified.
+        $unit = $extra['unit'] ?? '';
+        if (!empty($unit)) {
+            $u = new \stdClass();
+            $u->question = $question->id;
+            $u->multiplier = 1.0;
+            $u->unit = $unit;
+            $DB->insert_record('question_numerical_units', $u);
+        }
     }
 }
