@@ -82,6 +82,9 @@ if (!empty($pending) || !empty($approved)) {
     $importurl = new moodle_url($PAGE->url, ['action' => 'importall', 'sesskey' => sesskey()]);
     echo '<a href="' . $importurl . '" class="btn btn-success mb-3">' . get_string('approve_all', 'local_dreamu_qcm') . '</a> ';
 
+    $createquizurl = new moodle_url('/local/dreamu_qcm/create_quiz.php', ['courseid' => $courseid]);
+    echo '<a href="' . $createquizurl . '" class="btn btn-warning mb-3">Créer un Quiz</a> ';
+
     $genurl = new moodle_url('/local/dreamu_qcm/generate.php', ['courseid' => $courseid]);
     echo '<a href="' . $genurl . '" class="btn btn-primary mb-3">Générer plus</a>';
 }
