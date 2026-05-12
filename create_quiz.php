@@ -2,6 +2,7 @@
 require_once(__DIR__ . '/../../config.php');
 require_once($CFG->libdir . '/questionlib.php');
 require_once($CFG->dirroot . '/mod/quiz/lib.php');
+require_once($CFG->dirroot . '/mod/quiz/locallib.php');
 require_once($CFG->dirroot . '/course/lib.php');
 
 $courseid = required_param('courseid', PARAM_INT);
@@ -13,8 +14,8 @@ require_capability('local/dreamu_qcm:generate', $context);
 
 $PAGE->set_url(new moodle_url('/local/dreamu_qcm/create_quiz.php', ['courseid' => $courseid]));
 $PAGE->set_context($context);
-$PAGE->set_title('Créer un Quiz IA');
-$PAGE->set_heading($course->fullname . ' - Créer un Quiz IA');
+$PAGE->set_title('Creer un Quiz IA');
+$PAGE->set_heading($course->fullname . ' - Creer un Quiz IA');
 
 $confirm = optional_param('confirm', 0, PARAM_INT);
 $quizname = optional_param('quizname', '', PARAM_TEXT);
@@ -30,7 +31,7 @@ if ($confirm && confirm_sesskey()) {
     if (empty($ids)) {
         redirect(
             new moodle_url('/local/dreamu_qcm/review.php', ['courseid' => $courseid]),
-            'Aucune question à importer.',
+            'Aucune question a importer.',
             null,
             \core\output\notification::NOTIFY_WARNING
         );
@@ -38,139 +39,97 @@ if ($confirm && confirm_sesskey()) {
 
     $count = \local_dreamu_qcm\qcm_generator::import_to_bank($courseid, $ids);
 
-    // Step 2: Create the quiz activity.
+    // Step 2: Create the quiz activity using Moodle API.
     if (empty($quizname)) {
         $quizname = 'Quiz IA - ' . date('Y-m-d');
     }
 
-    // Get the default category to find the imported questions.
-    $category = question_get_default_category($context->id);
+    // Build the quiz module data as Moodle expects it.
+    $quizdata = new stdClass();
+    $quizdata->course = $courseid;
+    $quizdata->name = $quizname;
+    $quizdata->intro = '<p>Quiz genere automatiquement par l\'IA avec ' . $count . ' questions.</p>';
+    $quizdata->introformat = FORMAT_HTML;
+    $quizdata->timeopen = 0;
+    $quizdata->timeclose = 0;
+    $quizdata->timelimit = 0;
+    $quizdata->overduehandling = 'autosubmit';
+    $quizdata->graceperiod = 0;
+    $quizdata->preferredbehaviour = 'deferredfeedback';
+    $quizdata->attempts = 0;
+    $quizdata->grademethod = QUIZ_GRADEHIGHEST;
+    $quizdata->decimalpoints = 2;
+    $quizdata->questionsperpage = 1;
+    $quizdata->shuffleanswers = 1;
+    $quizdata->grade = 100;
+    $quizdata->sumgrades = 0;
+    $quizdata->reviewattempt = 69904;
+    $quizdata->reviewcorrectness = 69904;
+    $quizdata->reviewmarks = 69904;
+    $quizdata->reviewspecificfeedback = 69904;
+    $quizdata->reviewgeneralfeedback = 69904;
+    $quizdata->reviewrightanswer = 69904;
+    $quizdata->reviewoverallfeedback = 4368;
+    $quizdata->timecreated = time();
+    $quizdata->timemodified = time();
 
-    // Create quiz module instance.
-    $quiz = new stdClass();
-    $quiz->course = $courseid;
-    $quiz->name = $quizname;
-    $quiz->intro = '<p>Quiz généré automatiquement par l\'IA avec ' . $count . ' questions.</p>';
-    $quiz->introformat = FORMAT_HTML;
-    $quiz->timeopen = 0;
-    $quiz->timeclose = 0;
-    $quiz->timelimit = 0;
-    $quiz->overduehandling = 'autosubmit';
-    $quiz->graceperiod = 0;
-    $quiz->preferredbehaviour = 'deferredfeedback';
-    $quiz->canredoquestions = 0;
-    $quiz->attempts = 0;
-    $quiz->attemptonlast = 0;
-    $quiz->grademethod = 1; // Highest grade.
-    $quiz->decimalpoints = 2;
-    $quiz->questiondecimalpoints = -1;
-    $quiz->reviewattempt = 69904;
-    $quiz->reviewcorrectness = 69904;
-    $quiz->reviewmarks = 69904;
-    $quiz->reviewspecificfeedback = 69904;
-    $quiz->reviewgeneralfeedback = 69904;
-    $quiz->reviewrightanswer = 69904;
-    $quiz->reviewoverallfeedback = 4368;
-    $quiz->questionsperpage = 1;
-    $quiz->navmethod = 'free';
-    $quiz->shuffleanswers = 1;
-    $quiz->sumgrades = 0;
-    $quiz->grade = 100;
-    $quiz->timecreated = time();
-    $quiz->timemodified = time();
+    // Insert quiz record.
+    $quizdata->id = $DB->insert_record('quiz', $quizdata);
 
-    $quiz->id = $DB->insert_record('quiz', $quiz);
-
-    // Step 3: Create course module.
+    // Create course module via API.
     $module = $DB->get_record('modules', ['name' => 'quiz'], '*', MUST_EXIST);
 
     $cm = new stdClass();
     $cm->course = $courseid;
     $cm->module = $module->id;
-    $cm->instance = $quiz->id;
+    $cm->instance = $quizdata->id;
     $cm->section = 0;
     $cm->visible = 1;
     $cm->visibleoncoursepage = 1;
-    $cm->groupmode = 0;
-    $cm->groupingid = 0;
     $cm->added = time();
 
     $cmid = add_course_module($cm);
-
-    // Add to first course section.
-    $sectionnum = 0;
-    $section = $DB->get_record('course_sections', ['course' => $courseid, 'section' => $sectionnum]);
-    if (!$section) {
-        $section = course_create_section($courseid, $sectionnum);
-    }
-    course_add_cm_to_section($courseid, $cmid, $sectionnum);
-
-    // Set the module visibility.
+    course_add_cm_to_section($courseid, $cmid, 0);
     set_coursemodule_visible($cmid, 1);
 
-    // Step 4: Add questions to the quiz via quiz_slots.
-    // Get recently imported questions from the question bank (questions in the default category).
-    // We match by name from our local_dreamu_qcm records that were just imported.
-    $importedrecords = $DB->get_records('local_dreamu_qcm', ['courseid' => $courseid, 'status' => 'imported']);
+    // Reload quiz with full object for API calls.
+    $quizobj = $DB->get_record('quiz', ['id' => $quizdata->id], '*', MUST_EXIST);
+    $quizobj->cmid = $cmid;
 
-    $slot = 0;
-    $sumgrades = 0;
+    // Step 3: Add questions using quiz_add_quiz_question() API.
+    $importedrecords = $DB->get_records('local_dreamu_qcm', ['courseid' => $courseid, 'status' => 'imported']);
+    $added = 0;
 
     foreach ($importedrecords as $qcmrecord) {
-        // Find the matching question in the question bank by name prefix.
+        // Find the matching question in the question bank by name.
         $qname = substr($qcmrecord->question, 0, 80);
-        $question = $DB->get_record_select('question',
-            "category = :catid AND name = :qname AND qtype != 'random'",
-            ['catid' => $category->id, 'qname' => $qname],
-            '*', IGNORE_MULTIPLE
+
+        // Get question by name, most recent first.
+        $question = $DB->get_record_sql(
+            "SELECT q.id, q.defaultmark
+               FROM {question} q
+               JOIN {question_versions} qv ON qv.questionid = q.id
+               JOIN {question_bank_entries} qbe ON qbe.id = qv.questionbankentryid
+              WHERE q.name = :qname AND q.qtype != 'random'
+           ORDER BY q.timecreated DESC",
+            ['qname' => $qname],
+            IGNORE_MULTIPLE
         );
 
         if (!$question) {
             continue;
         }
 
-        // Get the question bank entry and version for Moodle 4.x.
-        $version = $DB->get_record_sql(
-            "SELECT qv.*, qbe.id AS bankentryid
-               FROM {question_versions} qv
-               JOIN {question_bank_entries} qbe ON qbe.id = qv.questionbankentryid
-              WHERE qv.questionid = :qid
-           ORDER BY qv.version DESC",
-            ['qid' => $question->id],
-            IGNORE_MULTIPLE
-        );
-
-        if (!$version) {
-            continue;
-        }
-
-        $slot++;
-        $sumgrades += $question->defaultmark;
-
-        // Create a quiz slot reference.
-        $reference = new stdClass();
-        $reference->usingcontextid = context_module::instance($cmid)->id;
-        $reference->component = 'mod_quiz';
-        $reference->questionarea = 'slot';
-        $reference->questionbankentryid = $version->bankentryid;
-        $reference->version = null; // Always latest.
-
-        $slotrecord = new stdClass();
-        $slotrecord->quizid = $quiz->id;
-        $slotrecord->slot = $slot;
-        $slotrecord->page = ceil($slot / $quiz->questionsperpage);
-        $slotrecord->requireprevious = 0;
-        $slotrecord->maxmark = $question->defaultmark;
-
-        $slotrecord->id = $DB->insert_record('quiz_slots', $slotrecord);
-
-        // Set the itemid for the reference.
-        $reference->itemid = $slotrecord->id;
-        $DB->insert_record('question_references', $reference);
+        // Use the proper Moodle API to add question to quiz.
+        quiz_add_quiz_question($question->id, $quizobj, 0, $question->defaultmark);
+        $added++;
     }
 
-    // Update quiz sum of grades.
-    $DB->set_field('quiz', 'sumgrades', $sumgrades, ['id' => $quiz->id]);
+    // Recalculate quiz sumgrades.
+    quiz_update_sumgrades($quizobj);
+
+    // Delete any preview attempts.
+    quiz_delete_previews($quizobj);
 
     // Rebuild course cache.
     rebuild_course_cache($courseid, true);
@@ -178,7 +137,7 @@ if ($confirm && confirm_sesskey()) {
     // Redirect to the quiz.
     $quizurl = new moodle_url('/mod/quiz/view.php', ['id' => $cmid]);
     redirect($quizurl,
-        "Quiz \"{$quizname}\" créé avec {$slot} questions !",
+        "Quiz \"{$quizname}\" cree avec {$added} questions !",
         null,
         \core\output\notification::NOTIFY_SUCCESS
     );
@@ -191,16 +150,16 @@ $pendingcount = $DB->count_records_select('local_dreamu_qcm',
     "courseid = :courseid AND status IN ('pending', 'approved')",
     ['courseid' => $courseid]);
 
-echo '<h3>Créer un Quiz automatiquement</h3>';
+echo '<h3>Creer un Quiz automatiquement</h3>';
 
 echo '<div class="alert alert-info">';
-echo '<strong>' . $pendingcount . '</strong> questions seront approuvées, importées dans la banque de questions, ';
-echo 'puis ajoutées à un nouveau quiz dans le cours.';
+echo '<strong>' . $pendingcount . '</strong> questions seront approuvees, importees dans la banque de questions, ';
+echo 'puis ajoutees a un nouveau quiz dans le cours.';
 echo '</div>';
 
 if ($pendingcount == 0) {
-    echo '<div class="alert alert-warning">Aucune question en attente ou approuvée. ';
-    echo '<a href="' . new moodle_url('/local/dreamu_qcm/generate.php', ['courseid' => $courseid]) . '">Générer des questions d\'abord.</a></div>';
+    echo '<div class="alert alert-warning">Aucune question en attente ou approuvee. ';
+    echo '<a href="' . new moodle_url('/local/dreamu_qcm/generate.php', ['courseid' => $courseid]) . '">Generer des questions d\'abord.</a></div>';
     echo $OUTPUT->footer();
     exit;
 }
@@ -218,7 +177,7 @@ echo '<input type="text" id="quizname" name="quizname" class="form-control" valu
 echo '</div>';
 
 echo '<div class="mt-3">';
-echo '<button type="submit" class="btn btn-warning">Créer le Quiz</button> ';
+echo '<button type="submit" class="btn btn-warning">Creer le Quiz</button> ';
 echo '<a href="' . new moodle_url('/local/dreamu_qcm/review.php', ['courseid' => $courseid]) . '" class="btn btn-secondary">Annuler</a>';
 echo '</div>';
 
