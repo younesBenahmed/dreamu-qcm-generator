@@ -289,10 +289,42 @@ class qcm_generator {
         global $DB, $USER;
 
         $context = $contextid ? \context::instance_by_id($contextid) : \context_course::instance($courseid);
-        $category = question_get_default_category($context->id);
+
+        // Get or create the default question category for this context.
+        $category = $DB->get_record('question_categories', [
+            'contextid' => $context->id,
+            'parent' => 0,
+        ]);
         if (!$category) {
-            $category = question_make_default_categories([$context]);
-            $category = question_get_default_category($context->id);
+            // Create top category first.
+            $top = new \stdClass();
+            $top->name = 'top';
+            $top->info = '';
+            $top->contextid = $context->id;
+            $top->parent = 0;
+            $top->sortorder = 0;
+            $top->stamp = make_unique_id_code();
+            $top->id = $DB->insert_record('question_categories', $top);
+
+            // Create default category under top.
+            $cat = new \stdClass();
+            $cat->name = get_string('defaultfor', 'question', $context->get_context_name(false));
+            $cat->info = get_string('defaultinfofor', 'question', $context->get_context_name(false));
+            $cat->contextid = $context->id;
+            $cat->parent = $top->id;
+            $cat->sortorder = 999;
+            $cat->stamp = make_unique_id_code();
+            $cat->id = $DB->insert_record('question_categories', $cat);
+            $category = $cat;
+        } else {
+            // Top exists, find or create default sub-category.
+            $sub = $DB->get_record('question_categories', [
+                'contextid' => $context->id,
+                'parent' => $category->id,
+            ]);
+            if ($sub) {
+                $category = $sub;
+            }
         }
 
         $imported = 0;
@@ -377,11 +409,11 @@ class qcm_generator {
         $mc->layout = 0;
         $mc->single = 1;
         $mc->shuffleanswers = 1;
-        $mc->correctfeedback = 'Correct!';
+        $mc->correctfeedback = 'Bonne réponse ! ' . ($qcm->explanation ?: '');
         $mc->correctfeedbackformat = FORMAT_HTML;
         $mc->partiallycorrectfeedback = '';
         $mc->partiallycorrectfeedbackformat = FORMAT_HTML;
-        $mc->incorrectfeedback = 'Incorrect.';
+        $mc->incorrectfeedback = 'Incorrect. ' . ($qcm->explanation ?: '');
         $mc->incorrectfeedbackformat = FORMAT_HTML;
         $mc->answernumbering = 'abc';
         $mc->showstandardinstruction = 0;
@@ -400,7 +432,11 @@ class qcm_generator {
             $answer->answer = $answertext;
             $answer->answerformat = FORMAT_HTML;
             $answer->fraction = ($letter === $qcm->correct) ? 1.0 : 0.0;
-            $answer->feedback = ($letter === $qcm->correct) ? ($qcm->explanation ?: 'Bonne reponse!') : '';
+            if ($letter === $qcm->correct) {
+                $answer->feedback = 'Correct ! ' . ($qcm->explanation ?: '');
+            } else {
+                $answer->feedback = 'Incorrect. La bonne réponse était : ' . ($options[$qcm->correct] ?? '') . '. ' . ($qcm->explanation ?: '');
+            }
             $answer->feedbackformat = FORMAT_HTML;
             $DB->insert_record('question_answers', $answer);
         }
@@ -417,7 +453,9 @@ class qcm_generator {
         $trueanswer->answer = 'True';
         $trueanswer->answerformat = FORMAT_MOODLE;
         $trueanswer->fraction = $istrue ? 1.0 : 0.0;
-        $trueanswer->feedback = $istrue ? ($qcm->explanation ?: '') : '';
+        $trueanswer->feedback = $istrue
+            ? ('Correct ! ' . ($qcm->explanation ?: ''))
+            : ('Incorrect. La bonne réponse était : Faux. ' . ($qcm->explanation ?: ''));
         $trueanswer->feedbackformat = FORMAT_HTML;
         $trueid = $DB->insert_record('question_answers', $trueanswer);
 
@@ -427,7 +465,9 @@ class qcm_generator {
         $falseanswer->answer = 'False';
         $falseanswer->answerformat = FORMAT_MOODLE;
         $falseanswer->fraction = $istrue ? 0.0 : 1.0;
-        $falseanswer->feedback = !$istrue ? ($qcm->explanation ?: '') : '';
+        $falseanswer->feedback = !$istrue
+            ? ('Correct ! ' . ($qcm->explanation ?: ''))
+            : ('Incorrect. La bonne réponse était : Vrai. ' . ($qcm->explanation ?: ''));
         $falseanswer->feedbackformat = FORMAT_HTML;
         $falseid = $DB->insert_record('question_answers', $falseanswer);
 
@@ -490,11 +530,11 @@ class qcm_generator {
         $mo = new \stdClass();
         $mo->questionid = $question->id;
         $mo->shuffleanswers = 1;
-        $mo->correctfeedback = 'Correct!';
+        $mo->correctfeedback = 'Bonne réponse ! ' . ($qcm->explanation ?: '');
         $mo->correctfeedbackformat = FORMAT_HTML;
-        $mo->partiallycorrectfeedback = 'Partially correct.';
+        $mo->partiallycorrectfeedback = 'Partiellement correct. ' . ($qcm->explanation ?: '');
         $mo->partiallycorrectfeedbackformat = FORMAT_HTML;
-        $mo->incorrectfeedback = 'Incorrect.';
+        $mo->incorrectfeedback = 'Incorrect. ' . ($qcm->explanation ?: '');
         $mo->incorrectfeedbackformat = FORMAT_HTML;
         $DB->insert_record('qtype_match_options', $mo);
 
