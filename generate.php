@@ -158,7 +158,7 @@ echo '<thead><tr><th>Type</th><th style="width:100px;">Nombre</th></tr></thead><
 foreach ($qtypeinfo as $type => $info) {
     echo '<tr>';
     echo '<td><strong>' . $info['label'] . '</strong><br><small class="text-muted">' . $info['desc'] . '</small></td>';
-    echo '<td><input type="number" name="count_' . $type . '" value="' . $info['default'] . '" min="0" max="20" class="form-control qtype-count" data-type="' . $type . '"></td>';
+    echo '<td><input type="number" name="count_' . $type . '" id="count_' . $type . '" value="' . $info['default'] . '" min="0" max="20" class="form-control qtype-count" data-type="' . $type . '" aria-label="Nombre de questions ' . $info['label'] . '"></td>';
     echo '</tr>';
 }
 
@@ -170,8 +170,8 @@ echo '</div></div>';
 
 // Difficulty.
 echo '<div class="form-group row">';
-echo '<label class="col-sm-3 col-form-label">' . get_string('difficulty', 'local_dreamu_qcm') . '</label>';
-echo '<div class="col-sm-3"><select name="difficulty" class="form-control">';
+echo '<label class="col-sm-3 col-form-label" for="difficulty">' . get_string('difficulty', 'local_dreamu_qcm') . '</label>';
+echo '<div class="col-sm-3"><select name="difficulty" id="difficulty" class="form-control" aria-label="Niveau de difficulté">';
 echo '<option value="easy">' . get_string('difficulty_easy', 'local_dreamu_qcm') . '</option>';
 echo '<option value="medium" selected>' . get_string('difficulty_medium', 'local_dreamu_qcm') . '</option>';
 echo '<option value="hard">' . get_string('difficulty_hard', 'local_dreamu_qcm') . '</option>';
@@ -179,29 +179,29 @@ echo '</select></div></div>';
 
 // Include hidden.
 echo '<div class="form-group row">';
-echo '<label class="col-sm-3 col-form-label">' . get_string('include_hidden', 'local_dreamu_qcm') . '</label>';
-echo '<div class="col-sm-3"><input type="checkbox" name="includehidden" value="1"></div>';
+echo '<label class="col-sm-3 col-form-label" for="includehidden">' . get_string('include_hidden', 'local_dreamu_qcm') . '</label>';
+echo '<div class="col-sm-3"><input type="checkbox" name="includehidden" id="includehidden" value="1" aria-label="Inclure les ressources masquées"></div>';
 echo '</div>';
 
 // Multi-model verification checkbox.
 echo '<div class="form-group row">';
-echo '<label class="col-sm-3 col-form-label">V&eacute;rification multi-mod&egrave;les</label>';
+echo '<label class="col-sm-3 col-form-label" for="verify">V&eacute;rification multi-mod&egrave;les</label>';
 echo '<div class="col-sm-3">';
-echo '<input type="checkbox" name="verify" value="1" checked>';
+echo '<input type="checkbox" name="verify" id="verify" value="1" checked aria-label="Activer la vérification multi-modèles">';
 echo '<small class="form-text text-muted d-block">Un second mod&egrave;le IA v&eacute;rifie chaque question pour &eacute;viter les hallucinations. Plus lent mais plus fiable.</small>';
 echo '</div>';
 echo '</div>';
 
 echo '<div class="form-group row">';
-echo '<label class="col-sm-3 col-form-label">Instructions sp&eacute;cifiques</label>';
+echo '<label class="col-sm-3 col-form-label" for="custom_instructions">Instructions sp&eacute;cifiques</label>';
 echo '<div class="col-sm-9">';
-echo '<textarea name="custom_instructions" class="form-control" rows="3" placeholder="Ex: Genere des questions uniquement sur les statistiques descriptives (moyenne, m&eacute;diane, &eacute;cart-type). Ne pas inclure de probabilit&eacute;s.">' . s(optional_param('custom_instructions', '', PARAM_RAW)) . '</textarea>';
+echo '<textarea name="custom_instructions" id="custom_instructions" class="form-control" rows="3" aria-label="Instructions sp&eacute;cifiques pour la g&eacute;n&eacute;ration" placeholder="Ex: Genere des questions uniquement sur les statistiques descriptives (moyenne, m&eacute;diane, &eacute;cart-type). Ne pas inclure de probabilit&eacute;s.">' . s(optional_param('custom_instructions', '', PARAM_RAW)) . '</textarea>';
 echo '<small class="form-text text-muted">Optionnel : guidez l\'IA sur les comp&eacute;tences ou sujets sp&eacute;cifiques &agrave; &eacute;valuer.</small>';
 echo '</div>';
 echo '</div>';
 
-echo '<button type="button" class="btn btn-outline-secondary btn-lg mr-2" id="btn-preview" onclick="previewContent()">Prévisualiser le contenu</button> ';
-echo '<button type="submit" class="btn btn-primary btn-lg" id="btn-generate">' . get_string('generate', 'local_dreamu_qcm') . '</button>';
+echo '<button type="button" class="btn btn-outline-secondary btn-lg mr-2" id="btn-preview" onclick="previewContent()" aria-label="Prévisualiser le contenu extrait">Prévisualiser le contenu</button> ';
+echo '<button type="submit" class="btn btn-primary btn-lg" id="btn-generate" aria-label="Lancer la génération des questions">' . get_string('generate', 'local_dreamu_qcm') . '</button>';
 
 // Preview modal.
 echo '

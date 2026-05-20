@@ -41,9 +41,8 @@ class qcm_generator {
             'hard' => 'hard (analysis, application, problem-solving)',
         ][$difficulty] ?? 'medium';
 
-        if (strlen($content) > 25000) {
-            $content = substr($content, 0, 25000) . "\n[... content truncated ...]";
-        }
+        // Smart chunking: split content into sections for balanced coverage.
+        $content_chunks = self::smart_chunk($content, 15000);
 
         // Distribute questions across types.
         $distribution = $this->distribute_questions($numquestions, $qtypes);
@@ -54,7 +53,10 @@ class qcm_generator {
             if ($count <= 0) continue;
 
             $prompt = $this->build_prompt($qtype, $count, $diffname, $langname, $custom_instructions);
-            $user = "Course content:\n\n{$content}\n\nGenerate {$count} questions in JSON:";
+            // Use a different chunk for each type to ensure balanced coverage.
+            $chunk_idx = array_search($qtype, array_keys($distribution)) % count($content_chunks);
+            $chunk = $content_chunks[$chunk_idx];
+            $user = "Course content:\n\n{$chunk}\n\nGenerate {$count} questions in JSON:";
 
             // Temperature per type: low for factual (truefalse, numerical), higher for creative (multichoice).
             $temp_by_type = [
@@ -143,6 +145,42 @@ class qcm_generator {
     /**
      * Distribute questions across types.
      */
+    /**
+     * Split content into balanced chunks by section separators.
+     */
+    private static function smart_chunk(string $content, int $max_chunk_size = 15000): array {
+        // Split by section markers (=== ... ===)
+        $sections = preg_split('/(?=^===\s)/m', $content);
+        $sections = array_filter($sections, function($s) { return strlen(trim($s)) > 20; });
+        $sections = array_values($sections);
+
+        if (empty($sections)) {
+            return [substr($content, 0, $max_chunk_size)];
+        }
+
+        // If total content fits in one chunk, return as-is.
+        if (strlen($content) <= $max_chunk_size) {
+            return [$content];
+        }
+
+        // Group sections into chunks that fit within max_chunk_size.
+        $chunks = [];
+        $current_chunk = '';
+        foreach ($sections as $section) {
+            if (strlen($current_chunk) + strlen($section) > $max_chunk_size && !empty($current_chunk)) {
+                $chunks[] = $current_chunk;
+                $current_chunk = $section;
+            } else {
+                $current_chunk .= $section;
+            }
+        }
+        if (!empty($current_chunk)) {
+            $chunks[] = $current_chunk;
+        }
+
+        return !empty($chunks) ? $chunks : [substr($content, 0, $max_chunk_size)];
+    }
+
     private function distribute_questions(int $total, array $qtypes): array {
         $count = count($qtypes);
         if ($count === 0) return ['multichoice' => $total];

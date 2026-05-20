@@ -40,6 +40,10 @@ if ($action === 'importall' && confirm_sesskey()) {
 }
 
 echo $OUTPUT->header();
+echo '<script>var COURSEID = ' . $courseid . ';</script>';
+
+// Focus styles for accessibility.
+echo '<style>button:focus, a:focus, select:focus, input:focus { outline: 2px solid #0d6efd; outline-offset: 2px; }</style>';
 
 // Get all questions.
 $questions = $DB->get_records('local_dreamu_qcm', ['courseid' => $courseid], 'timecreated DESC');
@@ -49,9 +53,9 @@ $approved = array_filter($questions, fn($q) => $q->status === 'approved');
 $imported = array_filter($questions, fn($q) => $q->status === 'imported');
 
 echo '<h3>' . get_string('review_title', 'local_dreamu_qcm') . '</h3>';
-echo '<p>En attente : <strong>' . count($pending) . '</strong> | ';
+echo '<div role="status"><p>En attente : <strong>' . count($pending) . '</strong> | ';
 echo 'Approuvées : <strong>' . count($approved) . '</strong> | ';
-echo 'Importées : <strong>' . count($imported) . '</strong></p>';
+echo 'Importées : <strong>' . count($imported) . '</strong></p></div>';
 
 // Count by type.
 $typecounts = [];
@@ -80,7 +84,7 @@ if (!empty($typecounts)) {
 
 if (!empty($pending) || !empty($approved)) {
     $approveurl = new moodle_url($PAGE->url, ['action' => 'approveall', 'sesskey' => sesskey()]);
-    echo '<a href="' . $approveurl . '" class="btn btn-success mb-3">Approuver tout</a> ';
+    echo '<a href="' . $approveurl . '" class="btn btn-success mb-3" aria-label="Approuver toutes les questions en attente">Approuver tout</a> ';
 
     $createquizurl = new moodle_url('/local/dreamu_qcm/create_quiz.php', ['courseid' => $courseid]);
     echo '<a href="' . $createquizurl . '" class="btn btn-warning mb-3">Créer un Quiz</a> ';
@@ -89,10 +93,49 @@ if (!empty($pending) || !empty($approved)) {
     echo '<a href="' . $genurl . '" class="btn btn-primary mb-3">Générer plus</a>';
 }
 
+// Filter UI.
+echo '<div class="mb-3" style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">';
+echo '    <div>';
+echo '        <label class="small text-muted d-block" for="filter-type">Type</label>';
+echo '        <select class="form-control form-control-sm" id="filter-type" aria-label="Filtrer par type de question" onchange="applyFilters()">';
+echo '            <option value="all">Tous</option>';
+echo '            <option value="multichoice">QCM</option>';
+echo '            <option value="truefalse">Vrai/Faux</option>';
+echo '            <option value="shortanswer">R&eacute;ponse courte</option>';
+echo '            <option value="matching">Correspondance</option>';
+echo '            <option value="numerical">Num&eacute;rique</option>';
+echo '        </select>';
+echo '    </div>';
+echo '    <div>';
+echo '        <label class="small text-muted d-block" for="filter-status">Statut</label>';
+echo '        <select class="form-control form-control-sm" id="filter-status" aria-label="Filtrer par statut" onchange="applyFilters()">';
+echo '            <option value="all">Tous</option>';
+echo '            <option value="pending">En attente</option>';
+echo '            <option value="approved">Approuv&eacute;e</option>';
+echo '            <option value="imported">Import&eacute;e</option>';
+echo '        </select>';
+echo '    </div>';
+echo '    <div>';
+echo '        <label class="small text-muted d-block" for="filter-verified">V&eacute;rification</label>';
+echo '        <select class="form-control form-control-sm" id="filter-verified" aria-label="Filtrer par statut de v&eacute;rification" onchange="applyFilters()">';
+echo '            <option value="all">Tous</option>';
+echo '            <option value="verified">V&eacute;rifi&eacute;</option>';
+echo '            <option value="unverified">Non v&eacute;rifi&eacute;</option>';
+echo '        </select>';
+echo '    </div>';
+echo '</div>';
+
 foreach ($questions as $q) {
     if ($q->status === 'rejected' || $q->status === 'imported') continue;
 
     $qtype = $q->qtype ?? 'multichoice';
+
+    // Compute verified data attribute value.
+    $verified_val = $q->verified ?? null;
+    $verified_data = 'unverified';
+    if ($verified_val !== null && $verified_val !== '' && (int)$verified_val === 1) {
+        $verified_data = 'verified';
+    }
 
     $statusbadge = [
         'pending' => '<span class="badge badge-warning bg-warning">En attente</span>',
@@ -113,11 +156,10 @@ foreach ($questions as $q) {
         'numerical' => '<span class="badge badge-warning bg-warning">Numérique</span>',
     ][$qtype] ?? '<span class="badge badge-secondary">' . $qtype . '</span>';
 
-    echo '<div class="card mb-3">';
+    echo '<div class="card mb-3 question-card" data-qtype="' . htmlspecialchars($qtype) . '" data-status="' . htmlspecialchars($q->status) . '" data-verified="' . $verified_data . '">';
     echo '<div class="card-header d-flex justify-content-between">';
     // Verification badge.
     $verifybadge = '';
-    $verified_val = $q->verified ?? null;
     if ($verified_val !== null && $verified_val !== '') {
         if ((int)$verified_val === 1) {
             $verifybadge = ' <span class="badge badge-success bg-success">V&eacute;rifi&eacute; &#10003;</span>';
@@ -132,18 +174,23 @@ foreach ($questions as $q) {
     echo '<span><strong>Q' . $q->id . '</strong> ' . $typebadge . ' ' . $diffbadge . ' ' . $statusbadge . $verifybadge . '</span>';
     echo '</div>';
     echo '<div class="card-body">';
-    echo '<p class="card-text"><strong>' . format_string($q->question) . '</strong></p>';
+    $editable = in_array($q->status, ['pending', 'approved']);
+    if ($editable) {
+        echo '<p class="card-text"><strong><span class="editable-field" data-qid="' . $q->id . '" data-field="question" data-value="' . htmlspecialchars($q->question, ENT_QUOTES) . '" style="cursor:pointer; border-bottom:1px dashed #ccc;" title="Cliquer pour modifier">' . format_string($q->question) . '</span></strong></p>';
+    } else {
+        echo '<p class="card-text"><strong>' . format_string($q->question) . '</strong></p>';
+    }
 
     // Render based on type.
     switch ($qtype) {
         case 'multichoice':
-            render_multichoice($q);
+            render_multichoice($q, $editable);
             break;
         case 'truefalse':
-            render_truefalse($q);
+            render_truefalse($q, $editable);
             break;
         case 'shortanswer':
-            render_shortanswer($q);
+            render_shortanswer($q, $editable);
             break;
         case 'matching':
             render_matching($q);
@@ -159,14 +206,18 @@ foreach ($questions as $q) {
     }
 
     if (!empty($q->explanation)) {
-        echo '<p class="text-muted mt-2"><em>' . format_string($q->explanation) . '</em></p>';
+        if ($editable) {
+            echo '<p class="text-muted mt-2"><em><span class="editable-field" data-qid="' . $q->id . '" data-field="explanation" data-value="' . htmlspecialchars($q->explanation, ENT_QUOTES) . '" style="cursor:pointer; border-bottom:1px dashed #ccc;" title="Cliquer pour modifier">' . format_string($q->explanation) . '</span></em></p>';
+        } else {
+            echo '<p class="text-muted mt-2"><em>' . format_string($q->explanation) . '</em></p>';
+        }
     }
 
     if ($q->status === 'pending') {
         $approveurl = new moodle_url($PAGE->url, ['action' => 'approve', 'qid' => $q->id, 'sesskey' => sesskey()]);
         $rejecturl = new moodle_url($PAGE->url, ['action' => 'reject', 'qid' => $q->id, 'sesskey' => sesskey()]);
-        echo '<a href="' . $approveurl . '" class="btn btn-sm btn-success">Approuver</a> ';
-        echo '<a href="' . $rejecturl . '" class="btn btn-sm btn-danger">Rejeter</a>';
+        echo '<a href="' . $approveurl . '" class="btn btn-sm btn-success" aria-label="Approuver la question ' . $q->id . '">Approuver</a> ';
+        echo '<a href="' . $rejecturl . '" class="btn btn-sm btn-danger" aria-label="Rejeter la question ' . $q->id . '">Rejeter</a>';
     }
 
     echo '</div></div>';
@@ -177,38 +228,138 @@ if (empty($questions)) {
     echo '<a href="' . new moodle_url('/local/dreamu_qcm/generate.php', ['courseid' => $courseid]) . '">Générer des questions !</a></div>';
 }
 
+?>
+<script>
+function applyFilters() {
+    var typeFilter = document.getElementById('filter-type').value;
+    var statusFilter = document.getElementById('filter-status').value;
+    var verifiedFilter = document.getElementById('filter-verified').value;
+    document.querySelectorAll('.question-card').forEach(function(card) {
+        var show = true;
+        if (typeFilter !== 'all' && card.dataset.qtype !== typeFilter) show = false;
+        if (statusFilter !== 'all' && card.dataset.status !== statusFilter) show = false;
+        if (verifiedFilter !== 'all' && card.dataset.verified !== verifiedFilter) show = false;
+        card.style.display = show ? '' : 'none';
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.editable-field').forEach(function(el) {
+        el.addEventListener('click', function() {
+            if (this.querySelector('input, textarea')) return;
+
+            var currentText = this.dataset.value || this.textContent.trim();
+            var field = this.dataset.field;
+            var qid = this.dataset.qid;
+            var isLong = field === 'question' || field === 'explanation';
+
+            var input;
+            if (isLong) {
+                input = document.createElement('textarea');
+                input.rows = 3;
+                input.className = 'form-control';
+            } else {
+                input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'form-control';
+            }
+            input.value = currentText;
+            this.textContent = '';
+            this.appendChild(input);
+            input.focus();
+
+            var saved = false;
+            var save = function() {
+                if (saved) return;
+                saved = true;
+                var newValue = input.value.trim();
+                fetch(M.cfg.wwwroot + '/local/dreamu_qcm/ajax_edit.php', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: 'qid=' + qid + '&field=' + field + '&value=' + encodeURIComponent(newValue) + '&courseid=' + COURSEID + '&sesskey=' + M.cfg.sesskey
+                }).then(function(r) { return r.json(); }).then(function(data) {
+                    if (data.status === 'ok') {
+                        el.textContent = newValue;
+                        el.dataset.value = newValue;
+                        el.style.background = '#d4edda';
+                        setTimeout(function() { el.style.background = ''; }, 1500);
+                    } else {
+                        el.textContent = currentText;
+                        el.style.background = '#f8d7da';
+                        setTimeout(function() { el.style.background = ''; }, 1500);
+                    }
+                }).catch(function() {
+                    el.textContent = currentText;
+                    el.style.background = '#f8d7da';
+                    setTimeout(function() { el.style.background = ''; }, 1500);
+                });
+            };
+
+            input.addEventListener('blur', save);
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !isLong) {
+                    e.preventDefault();
+                    save();
+                }
+                if (e.key === 'Escape') {
+                    el.textContent = currentText;
+                }
+            });
+        });
+    });
+});
+</script>
+<?php
 echo $OUTPUT->footer();
 
 // --- Render functions ---
 
-function render_multichoice($q) {
+function render_multichoice($q, $editable = false) {
     $letters = ['a' => 'A', 'b' => 'B', 'c' => 'C', 'd' => 'D'];
     $options = ['a' => $q->optiona, 'b' => $q->optionb, 'c' => $q->optionc, 'd' => $q->optiond];
     echo '<ul class="list-group mb-2">';
     foreach ($options as $letter => $text) {
         $class = ($letter === $q->correct) ? 'list-group-item list-group-item-success' : 'list-group-item';
-        echo '<li class="' . $class . '"><strong>' . $letters[$letter] . ')</strong> ' . format_string($text) . '</li>';
+        $fieldname = 'option' . $letter;
+        if ($editable) {
+            echo '<li class="' . $class . '"><strong>' . $letters[$letter] . ')</strong> <span class="editable-field" data-qid="' . $q->id . '" data-field="' . $fieldname . '" data-value="' . htmlspecialchars($text, ENT_QUOTES) . '" style="cursor:pointer; border-bottom:1px dashed #ccc;" title="Cliquer pour modifier">' . format_string($text) . '</span></li>';
+        } else {
+            echo '<li class="' . $class . '"><strong>' . $letters[$letter] . ')</strong> ' . format_string($text) . '</li>';
+        }
     }
     echo '</ul>';
+    if ($editable) {
+        echo '<div class="mb-2"><small class="text-muted">Bonne r&eacute;ponse :</small> ';
+        echo '<span class="editable-field" data-qid="' . $q->id . '" data-field="correct" data-value="' . htmlspecialchars($q->correct, ENT_QUOTES) . '" style="cursor:pointer; border-bottom:1px dashed #ccc;" title="Cliquer pour modifier (a, b, c ou d)">' . strtoupper($q->correct) . '</span>';
+        echo '</div>';
+    }
 }
 
-function render_truefalse($q) {
+function render_truefalse($q, $editable = false) {
     $istrue = ($q->correct === 'true');
     echo '<div class="mb-2">';
     echo '<span class="badge badge-' . ($istrue ? 'success bg-success' : 'secondary bg-secondary') . ' p-2 mr-2">';
     echo 'VRAI' . ($istrue ? ' (correct)' : '') . '</span>';
     echo '<span class="badge badge-' . (!$istrue ? 'success bg-success' : 'secondary bg-secondary') . ' p-2">';
     echo 'FAUX' . (!$istrue ? ' (correct)' : '') . '</span>';
+    if ($editable) {
+        echo '<br><small class="text-muted mt-1">Bonne r&eacute;ponse :</small> ';
+        echo '<span class="editable-field" data-qid="' . $q->id . '" data-field="correct" data-value="' . htmlspecialchars($q->correct, ENT_QUOTES) . '" style="cursor:pointer; border-bottom:1px dashed #ccc;" title="Cliquer pour modifier (true ou false)">' . ($istrue ? 'true' : 'false') . '</span>';
+    }
     echo '</div>';
 }
 
-function render_shortanswer($q) {
+function render_shortanswer($q, $editable = false) {
     echo '<div class="mb-2">';
-    echo '<span class="badge badge-success bg-success p-2">Réponse : ' . format_string($q->correct) . '</span>';
+    if ($editable) {
+        echo '<span class="badge badge-success bg-success p-2">R&eacute;ponse : <span class="editable-field" data-qid="' . $q->id . '" data-field="correct" data-value="' . htmlspecialchars($q->correct, ENT_QUOTES) . '" style="cursor:pointer; border-bottom:1px dashed #fff;" title="Cliquer pour modifier">' . format_string($q->correct) . '</span></span>';
+    } else {
+        echo '<span class="badge badge-success bg-success p-2">R&eacute;ponse : ' . format_string($q->correct) . '</span>';
+    }
     $extra = json_decode($q->extra_data ?? '{}', true);
     $alts = $extra['alternatives'] ?? [];
     if (!empty($alts)) {
-        echo '<br><small class="text-muted">Aussi accepté : ' . implode(', ', array_map('format_string', $alts)) . '</small>';
+        echo '<br><small class="text-muted">Aussi accept&eacute; : ' . implode(', ', array_map('format_string', $alts)) . '</small>';
     }
     echo '</div>';
 }
