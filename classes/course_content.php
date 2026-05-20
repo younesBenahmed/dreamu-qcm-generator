@@ -150,9 +150,20 @@ class course_content {
                     }
                     $text .= "--- File: {$filename} ---\n{$content}\n\n";
                 } elseif ($ext === 'pdf') {
-                    // PDF: extract text if possible, otherwise note it.
                     $text .= "--- File: {$filename} (PDF document) ---\n";
-                    $text .= "[PDF content - the AI should focus on other available text resources]\n\n";
+                    // Try to extract text with pdftotext.
+                    $tmpfile = tempnam(sys_get_temp_dir(), 'qcm_pdf_');
+                    file_put_contents($tmpfile, $file->get_content());
+                    $extracted = @shell_exec('pdftotext ' . escapeshellarg($tmpfile) . ' - 2>/dev/null');
+                    @unlink($tmpfile);
+                    if (!empty(trim($extracted))) {
+                        if (strlen($extracted) > 15000) {
+                            $extracted = substr($extracted, 0, 15000) . "\n[... PDF tronque ...]";
+                        }
+                        $text .= $extracted . "\n\n";
+                    } else {
+                        $text .= "[Impossible d'extraire le contenu du PDF]\n\n";
+                    }
                 } else {
                     $text .= "--- File: {$filename} ({$ext}) ---\n\n";
                 }
