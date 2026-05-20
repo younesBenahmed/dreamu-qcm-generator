@@ -151,10 +151,15 @@ class qcm_generator {
      * Parse AI response for a specific question type.
      */
     private function parse_questions(string $response, string $qtype): array {
-        $json = $response;
-        if (preg_match('/```(?:json)?\s*(\[.+\])\s*```/s', $response, $matches)) {
-            $json = $matches[1];
-        } elseif (preg_match('/(\[[\s\S]*\])/s', $response, $matches)) {
+        // Clean common model artifacts.
+        $cleaned = $response;
+        $cleaned = preg_replace('/<think>[\s\S]*?<\/think>/', '', $cleaned);
+        $cleaned = preg_replace('/```json\s*/', '', $cleaned);
+        $cleaned = preg_replace('/```\s*/', '', $cleaned);
+        $cleaned = trim($cleaned);
+
+        $json = $cleaned;
+        if (preg_match('/(\[[\s\S]*\])/s', $cleaned, $matches)) {
             $json = $matches[1];
         }
 
@@ -285,7 +290,7 @@ class qcm_generator {
      * Import approved questions into Moodle question bank.
      * Handles all question types.
      */
-    public static function import_to_bank(int $courseid, array $questionids, ?int $contextid = null): int {
+    public static function import_to_bank(int $courseid, array $questionids, ?int $contextid = null, bool $include_feedback = true): int {
         global $DB, $USER;
 
         $context = $contextid ? \context::instance_by_id($contextid) : \context_course::instance($courseid);
@@ -336,22 +341,22 @@ class qcm_generator {
 
             switch ($qtype) {
                 case 'multichoice':
-                    self::import_multichoice($DB, $category, $qcm);
+                    self::import_multichoice($DB, $category, $qcm, $include_feedback);
                     break;
                 case 'truefalse':
-                    self::import_truefalse($DB, $category, $qcm);
+                    self::import_truefalse($DB, $category, $qcm, $include_feedback);
                     break;
                 case 'shortanswer':
-                    self::import_shortanswer($DB, $category, $qcm);
+                    self::import_shortanswer($DB, $category, $qcm, $include_feedback);
                     break;
                 case 'matching':
-                    self::import_matching($DB, $category, $qcm);
+                    self::import_matching($DB, $category, $qcm, $include_feedback);
                     break;
                 case 'numerical':
-                    self::import_numerical($DB, $category, $qcm);
+                    self::import_numerical($DB, $category, $qcm, $include_feedback);
                     break;
                 default:
-                    self::import_multichoice($DB, $category, $qcm);
+                    self::import_multichoice($DB, $category, $qcm, $include_feedback);
                     break;
             }
 
@@ -362,7 +367,7 @@ class qcm_generator {
         return $imported;
     }
 
-    private static function create_question_base($DB, $category, $qcm, string $qtype): \stdClass {
+    private static function create_question_base($DB, $category, $qcm, string $qtype, bool $include_feedback = true): \stdClass {
         global $USER;
 
         $question = new \stdClass();
@@ -370,7 +375,7 @@ class qcm_generator {
         $question->name = substr($qcm->question, 0, 80);
         $question->questiontext = $qcm->question;
         $question->questiontextformat = FORMAT_HTML;
-        $question->generalfeedback = $qcm->explanation ?: '';
+        $question->generalfeedback = $include_feedback ? ($qcm->explanation ?: '') : '';
         $question->generalfeedbackformat = FORMAT_HTML;
         $question->qtype = $qtype;
         $question->defaultmark = 1;
@@ -401,19 +406,19 @@ class qcm_generator {
         return $question;
     }
 
-    private static function import_multichoice($DB, $category, $qcm): void {
-        $question = self::create_question_base($DB, $category, $qcm, 'multichoice');
+    private static function import_multichoice($DB, $category, $qcm, bool $include_feedback = true): void {
+        $question = self::create_question_base($DB, $category, $qcm, 'multichoice', $include_feedback);
 
         $mc = new \stdClass();
         $mc->questionid = $question->id;
         $mc->layout = 0;
         $mc->single = 1;
         $mc->shuffleanswers = 1;
-        $mc->correctfeedback = 'Bonne réponse ! ' . ($qcm->explanation ?: '');
+        $mc->correctfeedback = $include_feedback ? ('Bonne réponse ! ' . ($qcm->explanation ?: '')) : 'Bonne réponse !';
         $mc->correctfeedbackformat = FORMAT_HTML;
         $mc->partiallycorrectfeedback = '';
         $mc->partiallycorrectfeedbackformat = FORMAT_HTML;
-        $mc->incorrectfeedback = 'Incorrect. ' . ($qcm->explanation ?: '');
+        $mc->incorrectfeedback = $include_feedback ? ('Incorrect. ' . ($qcm->explanation ?: '')) : 'Incorrect.';
         $mc->incorrectfeedbackformat = FORMAT_HTML;
         $mc->answernumbering = 'abc';
         $mc->showstandardinstruction = 0;
@@ -432,7 +437,9 @@ class qcm_generator {
             $answer->answer = $answertext;
             $answer->answerformat = FORMAT_HTML;
             $answer->fraction = ($letter === $qcm->correct) ? 1.0 : 0.0;
-            if ($letter === $qcm->correct) {
+            if (!$include_feedback) {
+                $answer->feedback = '';
+            } else if ($letter === $qcm->correct) {
                 $answer->feedback = 'Correct ! ' . ($qcm->explanation ?: '');
             } else {
                 $answer->feedback = 'Incorrect. La bonne réponse était : ' . ($options[$qcm->correct] ?? '') . '. ' . ($qcm->explanation ?: '');
@@ -442,8 +449,8 @@ class qcm_generator {
         }
     }
 
-    private static function import_truefalse($DB, $category, $qcm): void {
-        $question = self::create_question_base($DB, $category, $qcm, 'truefalse');
+    private static function import_truefalse($DB, $category, $qcm, bool $include_feedback = true): void {
+        $question = self::create_question_base($DB, $category, $qcm, 'truefalse', $include_feedback);
 
         $istrue = ($qcm->correct === 'true');
 
@@ -453,9 +460,13 @@ class qcm_generator {
         $trueanswer->answer = 'True';
         $trueanswer->answerformat = FORMAT_MOODLE;
         $trueanswer->fraction = $istrue ? 1.0 : 0.0;
-        $trueanswer->feedback = $istrue
-            ? ('Correct ! ' . ($qcm->explanation ?: ''))
-            : ('Incorrect. La bonne réponse était : Faux. ' . ($qcm->explanation ?: ''));
+        if (!$include_feedback) {
+            $trueanswer->feedback = '';
+        } else {
+            $trueanswer->feedback = $istrue
+                ? ('Correct ! ' . ($qcm->explanation ?: ''))
+                : ('Incorrect. La bonne réponse était : Faux. ' . ($qcm->explanation ?: ''));
+        }
         $trueanswer->feedbackformat = FORMAT_HTML;
         $trueid = $DB->insert_record('question_answers', $trueanswer);
 
@@ -465,9 +476,13 @@ class qcm_generator {
         $falseanswer->answer = 'False';
         $falseanswer->answerformat = FORMAT_MOODLE;
         $falseanswer->fraction = $istrue ? 0.0 : 1.0;
-        $falseanswer->feedback = !$istrue
-            ? ('Correct ! ' . ($qcm->explanation ?: ''))
-            : ('Incorrect. La bonne réponse était : Vrai. ' . ($qcm->explanation ?: ''));
+        if (!$include_feedback) {
+            $falseanswer->feedback = '';
+        } else {
+            $falseanswer->feedback = !$istrue
+                ? ('Correct ! ' . ($qcm->explanation ?: ''))
+                : ('Incorrect. La bonne réponse était : Vrai. ' . ($qcm->explanation ?: ''));
+        }
         $falseanswer->feedbackformat = FORMAT_HTML;
         $falseid = $DB->insert_record('question_answers', $falseanswer);
 
@@ -479,8 +494,8 @@ class qcm_generator {
         $DB->insert_record('question_truefalse', $tf);
     }
 
-    private static function import_shortanswer($DB, $category, $qcm): void {
-        $question = self::create_question_base($DB, $category, $qcm, 'shortanswer');
+    private static function import_shortanswer($DB, $category, $qcm, bool $include_feedback = true): void {
+        $question = self::create_question_base($DB, $category, $qcm, 'shortanswer', $include_feedback);
 
         // Shortanswer options.
         $sa = new \stdClass();
@@ -494,7 +509,7 @@ class qcm_generator {
         $answer->answer = $qcm->correct;
         $answer->answerformat = FORMAT_MOODLE;
         $answer->fraction = 1.0;
-        $answer->feedback = $qcm->explanation ?: '';
+        $answer->feedback = $include_feedback ? ($qcm->explanation ?: '') : '';
         $answer->feedbackformat = FORMAT_HTML;
         $DB->insert_record('question_answers', $answer);
 
@@ -518,23 +533,23 @@ class qcm_generator {
         $wildcard->answer = '*';
         $wildcard->answerformat = FORMAT_MOODLE;
         $wildcard->fraction = 0.0;
-        $wildcard->feedback = 'Incorrect. ' . ($qcm->explanation ?: '');
+        $wildcard->feedback = $include_feedback ? ('Incorrect. ' . ($qcm->explanation ?: '')) : '';
         $wildcard->feedbackformat = FORMAT_HTML;
         $DB->insert_record('question_answers', $wildcard);
     }
 
-    private static function import_matching($DB, $category, $qcm): void {
-        $question = self::create_question_base($DB, $category, $qcm, 'match');
+    private static function import_matching($DB, $category, $qcm, bool $include_feedback = true): void {
+        $question = self::create_question_base($DB, $category, $qcm, 'match', $include_feedback);
 
         // Match options.
         $mo = new \stdClass();
         $mo->questionid = $question->id;
         $mo->shuffleanswers = 1;
-        $mo->correctfeedback = 'Bonne réponse ! ' . ($qcm->explanation ?: '');
+        $mo->correctfeedback = $include_feedback ? ('Bonne réponse ! ' . ($qcm->explanation ?: '')) : 'Bonne réponse !';
         $mo->correctfeedbackformat = FORMAT_HTML;
-        $mo->partiallycorrectfeedback = 'Partiellement correct. ' . ($qcm->explanation ?: '');
+        $mo->partiallycorrectfeedback = $include_feedback ? ('Partiellement correct. ' . ($qcm->explanation ?: '')) : 'Partiellement correct.';
         $mo->partiallycorrectfeedbackformat = FORMAT_HTML;
-        $mo->incorrectfeedback = 'Incorrect. ' . ($qcm->explanation ?: '');
+        $mo->incorrectfeedback = $include_feedback ? ('Incorrect. ' . ($qcm->explanation ?: '')) : 'Incorrect.';
         $mo->incorrectfeedbackformat = FORMAT_HTML;
         $DB->insert_record('qtype_match_options', $mo);
 
@@ -552,8 +567,8 @@ class qcm_generator {
         }
     }
 
-    private static function import_numerical($DB, $category, $qcm): void {
-        $question = self::create_question_base($DB, $category, $qcm, 'numerical');
+    private static function import_numerical($DB, $category, $qcm, bool $include_feedback = true): void {
+        $question = self::create_question_base($DB, $category, $qcm, 'numerical', $include_feedback);
 
         $extra = json_decode($qcm->extra_data ?? '{}', true);
         $tolerance = $extra['tolerance'] ?? 0.01;
@@ -564,7 +579,7 @@ class qcm_generator {
         $answer->answer = $qcm->correct;
         $answer->answerformat = FORMAT_MOODLE;
         $answer->fraction = 1.0;
-        $answer->feedback = $qcm->explanation ?: '';
+        $answer->feedback = $include_feedback ? ($qcm->explanation ?: '') : '';
         $answer->feedbackformat = FORMAT_HTML;
         $answerid = $DB->insert_record('question_answers', $answer);
 

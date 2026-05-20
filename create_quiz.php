@@ -19,6 +19,7 @@ $PAGE->set_heading($course->fullname . ' - Creer un Quiz IA');
 
 $confirm = optional_param('confirm', 0, PARAM_INT);
 $quizname = optional_param('quizname', '', PARAM_TEXT);
+$include_feedback = optional_param('include_feedback', 0, PARAM_INT);
 
 if ($confirm && confirm_sesskey()) {
     // Step 1: Approve all pending and import to question bank.
@@ -96,7 +97,7 @@ if ($confirm && confirm_sesskey()) {
 
     // Step 3: Import questions into the quiz module question bank context.
     $quizcontext = context_module::instance($cmid);
-    $count = \local_dreamu_qcm\qcm_generator::import_to_bank($courseid, $ids, $quizcontext->id);
+    $count = \local_dreamu_qcm\qcm_generator::import_to_bank($courseid, $ids, $quizcontext->id, (bool)$include_feedback);
 
     // Step 4: Add questions using quiz_add_quiz_question() API.
     $importedrecords = $DB->get_records_list('local_dreamu_qcm', 'id', $ids);
@@ -176,6 +177,14 @@ echo '<input type="hidden" name="courseid" value="' . $courseid . '">';
 echo '<div class="form-group">';
 echo '<label for="quizname"><strong>Nom du quiz :</strong></label>';
 echo '<input type="text" id="quizname" name="quizname" class="form-control" value="' . s($defaultname) . '">';
+echo '</div>';
+
+echo '<div class="form-group mt-3">';
+echo '<div class="form-check">';
+echo '<input class="form-check-input" type="checkbox" name="include_feedback" id="include_feedback" value="1" checked>';
+echo '<label class="form-check-label" for="include_feedback"><strong>Inclure le feedback IA</strong></label>';
+echo '<small class="form-text text-muted d-block">Quand l\'étudiant se trompe, il verra l\'explication de l\'IA avec la bonne réponse. Décochez pour un quiz sans feedback.</small>';
+echo '</div>';
 echo '</div>';
 
 echo '<div class="mt-3">';
