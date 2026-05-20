@@ -12,10 +12,10 @@ class qcm_generator {
     public function __construct() {
         $this->endpoint = get_config('local_dreamu_qcm', 'api_endpoint')
             ?: get_config('local_dreamu_ai', 'api_endpoint')
-            ?: 'http://100.76.166.71:8200/v1/chat/completions';
+            ?: 'http://100.76.166.71:11434/v1/chat/completions';
         $this->apikey = get_config('local_dreamu_qcm', 'api_key')
             ?: get_config('local_dreamu_ai', 'api_key')
-            ?: 'sk-dummy';
+            ?: 'ollama';
         $this->model = get_config('local_dreamu_qcm', 'model_name')
             ?: get_config('local_dreamu_ai', 'model_name')
             ?: 'general';
@@ -285,10 +285,10 @@ class qcm_generator {
      * Import approved questions into Moodle question bank.
      * Handles all question types.
      */
-    public static function import_to_bank(int $courseid, array $questionids): int {
+    public static function import_to_bank(int $courseid, array $questionids, ?int $contextid = null): int {
         global $DB, $USER;
 
-        $context = \context_course::instance($courseid);
+        $context = $contextid ? \context::instance_by_id($contextid) : \context_course::instance($courseid);
         $category = question_get_default_category($context->id);
         if (!$category) {
             $category = question_make_default_categories([$context]);

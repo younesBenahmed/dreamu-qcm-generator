@@ -31,12 +31,12 @@ if ($action === 'approveall' && confirm_sesskey()) {
 if ($action === 'importall' && confirm_sesskey()) {
     $DB->set_field_select('local_dreamu_qcm', 'status', 'approved',
         "courseid = :courseid AND status = 'pending'", ['courseid' => $courseid]);
-    $approved = $DB->get_records('local_dreamu_qcm', ['courseid' => $courseid, 'status' => 'approved']);
-    $ids = array_keys($approved);
-    if (!empty($ids)) {
-        $count = \local_dreamu_qcm\qcm_generator::import_to_bank($courseid, $ids);
-        redirect($PAGE->url, "{$count} questions importées dans la banque de questions !", null, \core\output\notification::NOTIFY_SUCCESS);
-    }
+    redirect(
+        new moodle_url('/local/dreamu_qcm/create_quiz.php', ['courseid' => $courseid]),
+        'Questions approuvées. Créez maintenant le quiz pour les importer dans son contexte.',
+        null,
+        \core\output\notification::NOTIFY_INFO
+    );
 }
 
 echo $OUTPUT->header();
@@ -79,8 +79,8 @@ if (!empty($typecounts)) {
 }
 
 if (!empty($pending) || !empty($approved)) {
-    $importurl = new moodle_url($PAGE->url, ['action' => 'importall', 'sesskey' => sesskey()]);
-    echo '<a href="' . $importurl . '" class="btn btn-success mb-3">' . get_string('approve_all', 'local_dreamu_qcm') . '</a> ';
+    $approveurl = new moodle_url($PAGE->url, ['action' => 'approveall', 'sesskey' => sesskey()]);
+    echo '<a href="' . $approveurl . '" class="btn btn-success mb-3">Approuver tout</a> ';
 
     $createquizurl = new moodle_url('/local/dreamu_qcm/create_quiz.php', ['courseid' => $courseid]);
     echo '<a href="' . $createquizurl . '" class="btn btn-warning mb-3">Créer un Quiz</a> ';

@@ -37,8 +37,6 @@ if ($confirm && confirm_sesskey()) {
         );
     }
 
-    $count = \local_dreamu_qcm\qcm_generator::import_to_bank($courseid, $ids);
-
     // Step 2: Create the quiz activity using Moodle API.
     if (empty($quizname)) {
         $quizname = 'Quiz IA - ' . date('Y-m-d');
@@ -48,7 +46,7 @@ if ($confirm && confirm_sesskey()) {
     $quizdata = new stdClass();
     $quizdata->course = $courseid;
     $quizdata->name = $quizname;
-    $quizdata->intro = '<p>Quiz genere automatiquement par l\'IA avec ' . $count . ' questions.</p>';
+    $quizdata->intro = '<p>Quiz genere automatiquement par l\'IA avec ' . count($ids) . ' questions.</p>';
     $quizdata->introformat = FORMAT_HTML;
     $quizdata->timeopen = 0;
     $quizdata->timeclose = 0;
@@ -96,8 +94,12 @@ if ($confirm && confirm_sesskey()) {
     $quizobj = $DB->get_record('quiz', ['id' => $quizdata->id], '*', MUST_EXIST);
     $quizobj->cmid = $cmid;
 
-    // Step 3: Add questions using quiz_add_quiz_question() API.
-    $importedrecords = $DB->get_records('local_dreamu_qcm', ['courseid' => $courseid, 'status' => 'imported']);
+    // Step 3: Import questions into the quiz module question bank context.
+    $quizcontext = context_module::instance($cmid);
+    $count = \local_dreamu_qcm\qcm_generator::import_to_bank($courseid, $ids, $quizcontext->id);
+
+    // Step 4: Add questions using quiz_add_quiz_question() API.
+    $importedrecords = $DB->get_records_list('local_dreamu_qcm', 'id', $ids);
     $added = 0;
 
     foreach ($importedrecords as $qcmrecord) {
@@ -125,8 +127,8 @@ if ($confirm && confirm_sesskey()) {
         $added++;
     }
 
-    // Recalculate quiz sumgrades.
-    quiz_update_sumgrades($quizobj);
+    // Recalculate quiz sumgrades with the current Moodle quiz API.
+    \mod_quiz\quiz_settings::create($quizobj->id)->get_grade_calculator()->recompute_quiz_sumgrades();
 
     // Delete any preview attempts.
     quiz_delete_previews($quizobj);
