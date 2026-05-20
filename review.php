@@ -115,7 +115,21 @@ foreach ($questions as $q) {
 
     echo '<div class="card mb-3">';
     echo '<div class="card-header d-flex justify-content-between">';
-    echo '<span><strong>Q' . $q->id . '</strong> ' . $typebadge . ' ' . $diffbadge . ' ' . $statusbadge . '</span>';
+    // Verification badge.
+    $verifybadge = '';
+    $verified_val = $q->verified ?? null;
+    if ($verified_val !== null && $verified_val !== '') {
+        if ((int)$verified_val === 1) {
+            $verifybadge = ' <span class="badge badge-success bg-success">V&eacute;rifi&eacute; &#10003;</span>';
+        } else {
+            $verifynote = htmlspecialchars($q->verification_note ?? '', ENT_QUOTES);
+            $verifybadge = ' <span class="badge badge-danger bg-danger" title="' . $verifynote . '">Non v&eacute;rifi&eacute; &#10007;</span>';
+        }
+    } else {
+        $verifybadge = ' <span class="badge badge-secondary bg-secondary">Non v&eacute;rifi&eacute;</span>';
+    }
+
+    echo '<span><strong>Q' . $q->id . '</strong> ' . $typebadge . ' ' . $diffbadge . ' ' . $statusbadge . $verifybadge . '</span>';
     echo '</div>';
     echo '<div class="card-body">';
     echo '<p class="card-text"><strong>' . format_string($q->question) . '</strong></p>';
@@ -137,6 +151,11 @@ foreach ($questions as $q) {
         case 'numerical':
             render_numerical($q);
             break;
+    }
+
+    // Show verification warning if question failed verification.
+    if (isset($q->verified) && $q->verified !== null && $q->verified !== '' && (int)$q->verified === 0 && !empty($q->verification_note)) {
+        echo '<div class="alert alert-danger mt-2 mb-2 py-1 px-2"><small><strong>Probl&egrave;me de v&eacute;rification :</strong> ' . format_string($q->verification_note) . '</small></div>';
     }
 
     if (!empty($q->explanation)) {

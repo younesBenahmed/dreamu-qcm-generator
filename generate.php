@@ -19,6 +19,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && confirm_sesskey()) {
     $cmids = optional_param_array('cmids', [], PARAM_INT);
     $difficulty = optional_param('difficulty', 'medium', PARAM_ALPHA);
     $includehidden = optional_param('includehidden', 0, PARAM_BOOL);
+    $verify = optional_param('verify', 0, PARAM_INT);
+    $custom_instructions = optional_param('custom_instructions', '', PARAM_RAW);
 
     // Get per-type counts.
     $typecounts = [
@@ -53,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && confirm_sesskey()) {
         $allquestions = [];
 
         foreach ($typecounts as $qtype => $count) {
-            $questions = $generator->generate($content, $count, $difficulty, 'fr', [$qtype]);
+            $questions = $generator->generate($content, $count, $difficulty, 'fr', [$qtype], $custom_instructions);
             $allquestions = array_merge($allquestions, $questions);
         }
 
@@ -75,6 +77,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && confirm_sesskey()) {
             $record->createdby = $USER->id;
             $record->timecreated = time();
             $DB->insert_record('local_dreamu_qcm', $record);
+        }
+
+        // Verify questions if enabled and there are any.
+        if ($verify && !empty($allquestions)) {
+            // Reload from DB to get IDs.
+            $stored = $DB->get_records('local_dreamu_qcm', ['courseid' => $courseid, 'status' => 'pending'], 'id DESC', '*', 0, count($allquestions));
+            $verified = $generator->verify_questions(array_values($stored), $content);
+
+            foreach ($verified as $vq) {
+                $update = new stdClass();
+                $update->id = $vq->id;
+                $update->verified = $vq->verified === true ? 1 : ($vq->verified === false ? 0 : null);
+                $update->verification_note = $vq->verification_note ?? '';
+                $DB->update_record('local_dreamu_qcm', $update);
+            }
         }
 
         redirect(
@@ -166,7 +183,57 @@ echo '<label class="col-sm-3 col-form-label">' . get_string('include_hidden', 'l
 echo '<div class="col-sm-3"><input type="checkbox" name="includehidden" value="1"></div>';
 echo '</div>';
 
+// Multi-model verification checkbox.
+echo '<div class="form-group row">';
+echo '<label class="col-sm-3 col-form-label">V&eacute;rification multi-mod&egrave;les</label>';
+echo '<div class="col-sm-3">';
+echo '<input type="checkbox" name="verify" value="1" checked>';
+echo '<small class="form-text text-muted d-block">Un second mod&egrave;le IA v&eacute;rifie chaque question pour &eacute;viter les hallucinations. Plus lent mais plus fiable.</small>';
+echo '</div>';
+echo '</div>';
+
+echo '<div class="form-group row">';
+echo '<label class="col-sm-3 col-form-label">Instructions sp&eacute;cifiques</label>';
+echo '<div class="col-sm-9">';
+echo '<textarea name="custom_instructions" class="form-control" rows="3" placeholder="Ex: Genere des questions uniquement sur les statistiques descriptives (moyenne, m&eacute;diane, &eacute;cart-type). Ne pas inclure de probabilit&eacute;s.">' . s(optional_param('custom_instructions', '', PARAM_RAW)) . '</textarea>';
+echo '<small class="form-text text-muted">Optionnel : guidez l\'IA sur les comp&eacute;tences ou sujets sp&eacute;cifiques &agrave; &eacute;valuer.</small>';
+echo '</div>';
+echo '</div>';
+
+echo '<button type="button" class="btn btn-outline-secondary btn-lg mr-2" id="btn-preview" onclick="previewContent()">Prévisualiser le contenu</button> ';
 echo '<button type="submit" class="btn btn-primary btn-lg" id="btn-generate">' . get_string('generate', 'local_dreamu_qcm') . '</button>';
+
+// Preview modal.
+echo '
+<div id="preview-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999; justify-content:center; align-items:center;">
+    <div style="background:white; border-radius:12px; padding:30px; max-width:700px; width:90%; max-height:80vh; overflow-y:auto; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <h4 style="margin:0;">Contenu qui sera envoyé à l\'IA</h4>
+            <button onclick="document.getElementById(\'preview-modal\').style.display=\'none\'" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
+        </div>
+        <div id="preview-content" style="background:#f8f9fa; border:1px solid #dee2e6; border-radius:8px; padding:16px; white-space:pre-wrap; font-family:monospace; font-size:13px; max-height:50vh; overflow-y:auto;">Chargement...</div>
+        <p id="preview-stats" style="margin-top:12px; color:#6c757d; font-size:13px;"></p>
+    </div>
+</div>';
+
+echo '
+<script>
+function previewContent() {
+    var cmids = [];
+    document.querySelectorAll("input[name=\'cmids[]\']:checked").forEach(function(cb) { cmids.push(cb.value); });
+    if (cmids.length === 0) { alert("Sélectionnez au moins une ressource."); return; }
+
+    document.getElementById("preview-modal").style.display = "flex";
+    document.getElementById("preview-content").textContent = "Extraction en cours...";
+
+    fetch(M.cfg.wwwroot + "/local/dreamu_qcm/ajax_preview.php?courseid=' . $courseid . '&cmids=" + cmids.join(",") + "&sesskey=" + M.cfg.sesskey)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            document.getElementById("preview-content").textContent = data.content;
+            document.getElementById("preview-stats").textContent = data.chars + " caractères | " + data.words + " mots | Estimé " + data.tokens + " tokens";
+        });
+}
+</script>';
 echo '</form>';
 
 // Progress overlay (hidden by default).

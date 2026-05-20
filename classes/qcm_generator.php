@@ -32,7 +32,8 @@ class qcm_generator {
      * @return array List of question objects with ->qtype
      */
     public function generate(string $content, int $numquestions = 10, string $difficulty = 'medium',
-                             string $language = 'fr', array $qtypes = ['multichoice']): array {
+                             string $language = 'fr', array $qtypes = ['multichoice'],
+                             string $custom_instructions = ''): array {
         $langname = ($language === 'fr') ? 'French' : 'English';
         $diffname = [
             'easy' => 'easy (basic recall, definitions)',
@@ -52,11 +53,21 @@ class qcm_generator {
         foreach ($distribution as $qtype => $count) {
             if ($count <= 0) continue;
 
-            $prompt = $this->build_prompt($qtype, $count, $diffname, $langname);
+            $prompt = $this->build_prompt($qtype, $count, $diffname, $langname, $custom_instructions);
             $user = "Course content:\n\n{$content}\n\nGenerate {$count} questions in JSON:";
 
+            // Temperature per type: low for factual (truefalse, numerical), higher for creative (multichoice).
+            $temp_by_type = [
+                'multichoice' => 0.7,
+                'truefalse' => 0.3,
+                'shortanswer' => 0.4,
+                'matching' => 0.5,
+                'numerical' => 0.2,
+            ];
+            $temperature = $temp_by_type[$qtype] ?? 0.7;
+
             try {
-                $response = $this->call_api($prompt, $user);
+                $response = $this->call_api($prompt, $user, $temperature);
                 $parsed = $this->parse_questions($response, $qtype);
                 $allquestions = array_merge($allquestions, $parsed);
             } catch (\Exception $e) {
@@ -66,6 +77,67 @@ class qcm_generator {
         }
 
         return $allquestions;
+    }
+
+
+    /**
+     * Verify generated questions against course content using a second model.
+     * Returns questions with a 'verified' field (true/false) and 'verification_note'.
+     */
+    public function verify_questions(array $questions, string $content): array {
+        $verifier_model = 'llama3.1:70b';
+        $verified = [];
+
+        foreach ($questions as $q) {
+            $prompt = "Tu es un verificateur de questions d'examen. Tu dois determiner si la question suivante et sa reponse sont FACTUELLEMENT CORRECTES par rapport au contenu du cours fourni.\n\n";
+            $prompt .= "=== CONTENU DU COURS ===\n" . substr($content, 0, 10000) . "\n\n";
+            $prompt .= "=== QUESTION ===\n" . $q->question . "\n";
+
+            if ($q->qtype === 'multichoice') {
+                $prompt .= "Options: A) " . $q->optiona . " B) " . $q->optionb . " C) " . $q->optionc . " D) " . $q->optiond . "\n";
+                $prompt .= "Reponse indiquee comme correcte: " . strtoupper($q->correct) . "\n";
+            } else if ($q->qtype === 'truefalse') {
+                $prompt .= "Reponse indiquee: " . $q->correct . "\n";
+            } else {
+                $prompt .= "Reponse: " . $q->correct . "\n";
+            }
+
+            $prompt .= "\nReponds UNIQUEMENT avec un JSON: {\"valid\": true/false, \"reason\": \"explication courte\"}\n";
+            $prompt .= "- valid=true si la question ET la reponse sont correctes par rapport au contenu du cours\n";
+            $prompt .= "- valid=false si la question est hors-sujet, si la reponse est fausse, ou si le niveau est inadapte\n";
+
+            try {
+                // Save current model, use verifier
+                $original_model = $this->model;
+                $this->model = $verifier_model;
+
+                $response = $this->call_api($prompt, "Verifie cette question. Reponds UNIQUEMENT avec le JSON.");
+
+                $this->model = $original_model;
+
+                // Clean and parse
+                $response = preg_replace('/<think>[\s\S]*?<\/think>/', '', $response);
+                $response = preg_replace('/```json\s*/', '', $response);
+                $response = preg_replace('/```\s*/', '', $response);
+                $response = trim($response);
+
+                if (preg_match('/\{[\s\S]*\}/', $response, $matches)) {
+                    $result = json_decode($matches[0], true);
+                    $q->verified = !empty($result['valid']);
+                    $q->verification_note = $result['reason'] ?? '';
+                } else {
+                    $q->verified = null; // Could not verify
+                    $q->verification_note = 'Verification impossible';
+                }
+            } catch (\Exception $e) {
+                $q->verified = null;
+                $q->verification_note = 'Erreur de verification: ' . $e->getMessage();
+            }
+
+            $verified[] = $q;
+        }
+
+        return $verified;
     }
 
     /**
@@ -89,62 +161,94 @@ class qcm_generator {
     /**
      * Build the system prompt for each question type.
      */
-    private function build_prompt(string $qtype, int $count, string $diffname, string $langname): string {
+    private function build_prompt(string $qtype, int $count, string $diffname, string $langname, string $custom_instructions = ''): string {
         $base = "You are a university professor creating exam questions. "
             . "Difficulty: {$diffname}. Language: {$langname}. "
             . "Respond ONLY in valid JSON array format. ";
 
+        $prompt = '';
+
         switch ($qtype) {
             case 'multichoice':
-                return $base . "Generate EXACTLY {$count} multiple choice questions.\n"
+                $prompt = $base . "Generate EXACTLY {$count} multiple choice questions.\n"
                     . "Format: [{\"type\": \"multichoice\", \"question\": \"...\", \"a\": \"...\", \"b\": \"...\", \"c\": \"...\", \"d\": \"...\", \"correct\": \"a\", \"explanation\": \"...\"}]\n"
                     . "Rules:\n"
                     . "- 4 options (a, b, c, d), 'correct' = letter of right answer\n"
                     . "- Wrong answers must be plausible\n"
-                    . "- All text in {$langname}";
+                    . "- All text in {$langname}\n\n"
+                    . "Example of a good question:\n"
+                    . "[{\"type\": \"multichoice\", \"question\": \"Quelle est la moyenne d'un échantillon {2, 4, 6} ?\", \"a\": \"3\", \"b\": \"4\", \"c\": \"5\", \"d\": \"6\", \"correct\": \"b\", \"explanation\": \"La moyenne est (2+4+6)/3 = 12/3 = 4\"}]\n\n"
+                    . "Another example:\n"
+                    . "[{\"type\": \"multichoice\", \"question\": \"Quel indicateur mesure la dispersion des données autour de la moyenne ?\", \"a\": \"La médiane\", \"b\": \"Le mode\", \"c\": \"L'écart-type\", \"d\": \"Le quartile\", \"correct\": \"c\", \"explanation\": \"L'écart-type mesure la dispersion des valeurs autour de la moyenne arithmétique.\"}]";
+                break;
 
             case 'truefalse':
-                return $base . "Generate EXACTLY {$count} true/false questions.\n"
+                $prompt = $base . "Generate EXACTLY {$count} true/false questions.\n"
                     . "Format: [{\"type\": \"truefalse\", \"question\": \"...\", \"correct\": true, \"explanation\": \"...\"}]\n"
                     . "Rules:\n"
                     . "- 'correct' is true or false (boolean)\n"
                     . "- Questions should be clear statements that are definitively true or false\n"
                     . "- Mix true and false answers (not all the same)\n"
-                    . "- All text in {$langname}";
+                    . "- All text in {$langname}\n\n"
+                    . "Example of a good question:\n"
+                    . "[{\"type\": \"truefalse\", \"question\": \"La médiane d'un échantillon est toujours égale à la moyenne.\", \"correct\": false, \"explanation\": \"La médiane et la moyenne ne sont égales que dans une distribution parfaitement symétrique.\"}]\n\n"
+                    . "Another example:\n"
+                    . "[{\"type\": \"truefalse\", \"question\": \"La variance est le carré de l'écart-type.\", \"correct\": true, \"explanation\": \"Par définition, la variance est sigma² et l'écart-type est sigma, donc la variance est bien le carré de l'écart-type.\"}]";
+                break;
 
             case 'shortanswer':
-                return $base . "Generate EXACTLY {$count} short answer questions.\n"
+                $prompt = $base . "Generate EXACTLY {$count} short answer questions.\n"
                     . "Format: [{\"type\": \"shortanswer\", \"question\": \"...\", \"correct\": \"the answer\", \"alternatives\": [\"alt1\", \"alt2\"], \"explanation\": \"...\"}]\n"
                     . "Rules:\n"
                     . "- 'correct' is the main expected answer (1-3 words)\n"
                     . "- 'alternatives' are other acceptable answers (synonyms, abbreviations)\n"
                     . "- Questions should have a clear, unambiguous short answer\n"
                     . "- Good for: definitions, names, specific terms, formulas\n"
-                    . "- All text in {$langname}";
+                    . "- All text in {$langname}\n\n"
+                    . "Example of a good question:\n"
+                    . "[{\"type\": \"shortanswer\", \"question\": \"Comment appelle-t-on la valeur qui apparaît le plus fréquemment dans un échantillon ?\", \"correct\": \"le mode\", \"alternatives\": [\"mode\", \"Mode\"], \"explanation\": \"Le mode est la valeur la plus fréquente dans une série statistique.\"}]\n\n"
+                    . "Another example:\n"
+                    . "[{\"type\": \"shortanswer\", \"question\": \"Quelle mesure de tendance centrale divise un échantillon ordonné en deux parties égales ?\", \"correct\": \"la médiane\", \"alternatives\": [\"médiane\", \"Médiane\"], \"explanation\": \"La médiane est la valeur qui sépare la moitié inférieure de la moitié supérieure d'un échantillon ordonné.\"}]";
+                break;
 
             case 'matching':
-                return $base . "Generate EXACTLY {$count} matching questions.\n"
+                $prompt = $base . "Generate EXACTLY {$count} matching questions.\n"
                     . "Format: [{\"type\": \"matching\", \"question\": \"Match the following:\", \"pairs\": [{\"term\": \"...\", \"definition\": \"...\"}], \"explanation\": \"...\"}]\n"
                     . "Rules:\n"
                     . "- Each question has 4-6 pairs of term/definition\n"
                     . "- Terms on the left, definitions on the right\n"
                     . "- Good for: vocabulary, concept-definition, cause-effect\n"
-                    . "- All text in {$langname}";
+                    . "- All text in {$langname}\n\n"
+                    . "Example of a good question:\n"
+                    . "[{\"type\": \"matching\", \"question\": \"Associez chaque mesure statistique à sa définition :\", \"pairs\": [{\"term\": \"Moyenne\", \"definition\": \"Somme des valeurs divisée par le nombre de valeurs\"}, {\"term\": \"Médiane\", \"definition\": \"Valeur centrale d'un échantillon ordonné\"}, {\"term\": \"Mode\", \"definition\": \"Valeur la plus fréquente\"}, {\"term\": \"Étendue\", \"definition\": \"Différence entre la valeur maximale et minimale\"}], \"explanation\": \"Ces quatre mesures sont les indicateurs fondamentaux de la statistique descriptive.\"}]";
+                break;
 
             case 'numerical':
-                return $base . "Generate EXACTLY {$count} numerical answer questions.\n"
+                $prompt = $base . "Generate EXACTLY {$count} numerical answer questions.\n"
                     . "Format: [{\"type\": \"numerical\", \"question\": \"...\", \"correct\": 42.5, \"tolerance\": 0.1, \"unit\": \"kg\", \"explanation\": \"...\"}]\n"
                     . "Rules:\n"
                     . "- 'correct' is the numeric answer\n"
                     . "- 'tolerance' is the acceptable margin of error\n"
                     . "- 'unit' is the expected unit (optional)\n"
                     . "- Good for: calculations, measurements, quantities\n"
-                    . "- All text in {$langname}";
+                    . "- All text in {$langname}\n\n"
+                    . "Example of a good question:\n"
+                    . "[{\"type\": \"numerical\", \"question\": \"Calculez la variance de l'échantillon {2, 4, 6}. La moyenne est 4.\", \"correct\": 2.67, \"tolerance\": 0.01, \"unit\": \"\", \"explanation\": \"Variance = [(2-4)² + (4-4)² + (6-4)²] / 3 = [4 + 0 + 4] / 3 = 8/3 = 2.67\"}]\n\n"
+                    . "Another example:\n"
+                    . "[{\"type\": \"numerical\", \"question\": \"Quel est l'écart-type de la série {10, 20, 30} ?\", \"correct\": 8.16, \"tolerance\": 0.01, \"unit\": \"\", \"explanation\": \"Moyenne = 20, Variance = [(10-20)² + (20-20)² + (30-20)²]/3 = 200/3 = 66.67, Écart-type = sqrt(66.67) = 8.16\"}]";
+                break;
 
             default:
-                return $base . "Generate EXACTLY {$count} multiple choice questions.\n"
+                $prompt = $base . "Generate EXACTLY {$count} multiple choice questions.\n"
                     . "Format: [{\"type\": \"multichoice\", \"question\": \"...\", \"a\": \"...\", \"b\": \"...\", \"c\": \"...\", \"d\": \"...\", \"correct\": \"a\", \"explanation\": \"...\"}]";
+                break;
         }
+
+        if (!empty($custom_instructions)) {
+            $prompt .= "\n\nINSTRUCTIONS SPECIFIQUES DU PROFESSEUR:\n" . $custom_instructions . "\n";
+        }
+
+        return $prompt;
     }
 
     /**
@@ -242,14 +346,14 @@ class qcm_generator {
     /**
      * Call the AI API.
      */
-    private function call_api(string $system, string $user): string {
+    private function call_api(string $system, string $user, float $temperature = 0.7): string {
         $payload = json_encode([
             'model' => $this->model,
             'messages' => [
                 ['role' => 'system', 'content' => $system],
                 ['role' => 'user', 'content' => $user],
             ],
-            'temperature' => 0.7,
+            'temperature' => $temperature,
             'max_tokens' => 4000,
         ], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
 

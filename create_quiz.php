@@ -20,6 +20,7 @@ $PAGE->set_heading($course->fullname . ' - Creer un Quiz IA');
 $confirm = optional_param('confirm', 0, PARAM_INT);
 $quizname = optional_param('quizname', '', PARAM_TEXT);
 $include_feedback = optional_param('include_feedback', 0, PARAM_INT);
+$quiz_mode = optional_param('quiz_mode', 'exam', PARAM_ALPHA);
 
 if ($confirm && confirm_sesskey()) {
     // Step 1: Approve all pending and import to question bank.
@@ -54,8 +55,13 @@ if ($confirm && confirm_sesskey()) {
     $quizdata->timelimit = 0;
     $quizdata->overduehandling = 'autosubmit';
     $quizdata->graceperiod = 0;
-    $quizdata->preferredbehaviour = 'deferredfeedback';
-    $quizdata->attempts = 0;
+    if ($quiz_mode === 'training') {
+        $quizdata->preferredbehaviour = 'immediatefeedback';
+        $quizdata->attempts = 0; // Unlimited attempts
+    } else {
+        $quizdata->preferredbehaviour = 'deferredfeedback';
+        $quizdata->attempts = 1; // Single attempt for exam
+    }
     $quizdata->grademethod = QUIZ_GRADEHIGHEST;
     $quizdata->decimalpoints = 2;
     $quizdata->questionsperpage = 1;
@@ -177,6 +183,18 @@ echo '<input type="hidden" name="courseid" value="' . $courseid . '">';
 echo '<div class="form-group">';
 echo '<label for="quizname"><strong>Nom du quiz :</strong></label>';
 echo '<input type="text" id="quizname" name="quizname" class="form-control" value="' . s($defaultname) . '">';
+echo '</div>';
+
+echo '<div class="form-group mt-3">';
+echo '<label><strong>Mode du quiz :</strong></label>';
+echo '<div class="form-check">';
+echo '<input class="form-check-input" type="radio" name="quiz_mode" id="mode_exam" value="exam" checked>';
+echo '<label class="form-check-label" for="mode_exam">Mode examen <small class="text-muted">- feedback après soumission du quiz entier</small></label>';
+echo '</div>';
+echo '<div class="form-check">';
+echo '<input class="form-check-input" type="radio" name="quiz_mode" id="mode_training" value="training">';
+echo '<label class="form-check-label" for="mode_training">Mode entraînement <small class="text-muted">- feedback immédiat après chaque question, tentatives illimitées</small></label>';
+echo '</div>';
 echo '</div>';
 
 echo '<div class="form-group mt-3">';

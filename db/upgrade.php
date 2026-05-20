@@ -75,5 +75,25 @@ function xmldb_local_dreamu_qcm_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2026050606, 'local', 'dreamu_qcm');
     }
 
+    if ($oldversion < 2026052000) {
+        $table = new xmldb_table('local_dreamu_qcm');
+
+        // Add verified field (nullable int, 1=valid, 0=invalid, null=not verified).
+        $field = new xmldb_field('verified', XMLDB_TYPE_INTEGER, '1', null,
+            null, null, null, 'status');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        // Add verification_note field (nullable text).
+        $field2 = new xmldb_field('verification_note', XMLDB_TYPE_TEXT, null, null,
+            null, null, null, 'verified');
+        if (!$dbman->field_exists($table, $field2)) {
+            $dbman->add_field($table, $field2);
+        }
+
+        upgrade_plugin_savepoint(true, 2026052000, 'local', 'dreamu_qcm');
+    }
+
     return true;
 }

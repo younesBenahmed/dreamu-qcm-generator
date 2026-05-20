@@ -16,6 +16,8 @@
         <FIELD NAME="explanation" TYPE="text" NOTNULL="false"/>
         <FIELD NAME="extra_data" TYPE="text" NOTNULL="false" COMMENT="JSON for matching pairs, numerical tolerance, etc."/>
         <FIELD NAME="status" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="pending"/>
+        <FIELD NAME="verified" TYPE="int" LENGTH="1" NOTNULL="false" DEFAULT="" COMMENT="Verification result: 1=valid, 0=invalid, null=not verified"/>
+        <FIELD NAME="verification_note" TYPE="text" NOTNULL="false" COMMENT="Reason from the verification model"/>
         <FIELD NAME="createdby" TYPE="int" LENGTH="10" NOTNULL="true"/>
         <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true"/>
       </FIELDS>
