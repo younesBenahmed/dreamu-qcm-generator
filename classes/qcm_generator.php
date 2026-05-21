@@ -88,7 +88,8 @@ class qcm_generator {
      * Returns questions with a 'verified' field (true/false) and 'verification_note'.
      */
     public function verify_questions(array $questions, string $content): array {
-        $verifier_model = 'llama3.1:70b';
+        // Use the same model for verification (DeepSeek R1 is good at reasoning/verification).
+        $verifier_model = $this->model;
         $verified = [];
 
         foreach ($questions as $q) {
