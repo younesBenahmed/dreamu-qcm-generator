@@ -12,10 +12,10 @@ class qcm_generator {
     public function __construct() {
         $this->endpoint = get_config('local_dreamu_qcm', 'api_endpoint')
             ?: get_config('local_dreamu_ai', 'api_endpoint')
-            ?: 'http://100.76.166.71:11434/v1/chat/completions';
+            ?: 'http://100.76.166.71:8200/v1/chat/completions';
         $this->apikey = get_config('local_dreamu_qcm', 'api_key')
             ?: get_config('local_dreamu_ai', 'api_key')
-            ?: 'ollama';
+            ?: 'dummy';
         $this->model = get_config('local_dreamu_qcm', 'model_name')
             ?: get_config('local_dreamu_ai', 'model_name')
             ?: 'general';
@@ -75,6 +75,7 @@ class qcm_generator {
             } catch (\Exception $e) {
                 // If one type fails, continue with others.
                 debugging("QCM generation failed for type {$qtype}: " . $e->getMessage(), DEBUG_DEVELOPER);
+                error_log("QCM_GEN_ERROR [{$qtype}]: " . $e->getMessage());
             }
         }
 
