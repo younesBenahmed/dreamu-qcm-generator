@@ -125,105 +125,156 @@ echo '        </select>';
 echo '    </div>';
 echo '</div>';
 
-foreach ($questions as $q) {
-    if ($q->status === 'rejected' || $q->status === 'imported') continue;
+// Group questions by generation session (5 min window).
+// First, filter out rejected/imported for display grouping.
+$displayquestions = array_filter($questions, fn($q) => $q->status !== 'rejected' && $q->status !== 'imported');
 
-    $qtype = $q->qtype ?? 'multichoice';
-
-    // Compute verified data attribute value.
-    $verified_val = $q->verified ?? null;
-    $verified_data = 'unverified';
-    if ($verified_val !== null && $verified_val !== '' && (int)$verified_val === 1) {
-        $verified_data = 'verified';
-    }
-
-    $statusbadge = [
-        'pending' => '<span class="badge badge-warning bg-warning">En attente</span>',
-        'approved' => '<span class="badge badge-success bg-success">Approuvée</span>',
-    ][$q->status] ?? '';
-
-    $diffbadge = [
-        'easy' => '<span class="badge badge-info bg-info">Facile</span>',
-        'medium' => '<span class="badge badge-primary bg-primary">Moyen</span>',
-        'hard' => '<span class="badge badge-danger bg-danger">Difficile</span>',
-    ][$q->difficulty] ?? '';
-
-    $typebadge = [
-        'multichoice' => '<span class="badge badge-secondary bg-secondary">QCM</span>',
-        'truefalse' => '<span class="badge badge-dark bg-dark text-white">Vrai/Faux</span>',
-        'shortanswer' => '<span class="badge badge-light bg-light text-dark border">Réponse courte</span>',
-        'matching' => '<span class="badge badge-info bg-info">Correspondance</span>',
-        'numerical' => '<span class="badge badge-warning bg-warning">Numérique</span>',
-    ][$qtype] ?? '<span class="badge badge-secondary">' . $qtype . '</span>';
-
-    echo '<div class="card mb-3 question-card" data-qtype="' . htmlspecialchars($qtype) . '" data-status="' . htmlspecialchars($q->status) . '" data-verified="' . $verified_data . '">';
-    echo '<div class="card-header d-flex justify-content-between">';
-    // Verification badge.
-    $verifybadge = '';
-    if ($verified_val !== null && $verified_val !== '') {
-        if ((int)$verified_val === 1) {
-            $verifybadge = ' <span class="badge badge-success bg-success">V&eacute;rifi&eacute; &#10003;</span>';
-        } else {
-            $verifynote = htmlspecialchars($q->verification_note ?? '', ENT_QUOTES);
-            $verifybadge = ' <span class="badge badge-danger bg-danger" title="' . $verifynote . '">Non v&eacute;rifi&eacute; &#10007;</span>';
+$sessions = [];
+$current_session = [];
+$last_time = 0;
+foreach ($displayquestions as $q) {
+    if ($last_time > 0 && abs($q->timecreated - $last_time) > 300) {
+        if (!empty($current_session)) {
+            $sessions[] = $current_session;
         }
-    } else {
-        $verifybadge = ' <span class="badge badge-secondary bg-secondary">Non v&eacute;rifi&eacute;</span>';
+        $current_session = [];
     }
+    $current_session[] = $q;
+    $last_time = $q->timecreated;
+}
+if (!empty($current_session)) {
+    $sessions[] = $current_session;
+}
 
-    echo '<span><strong>Q' . $q->id . '</strong> ' . $typebadge . ' ' . $diffbadge . ' ' . $statusbadge . $verifybadge . '</span>';
+$typelabels_render = [
+    'multichoice' => 'QCM',
+    'truefalse' => 'Vrai/Faux',
+    'shortanswer' => 'Reponse courte',
+    'matching' => 'Correspondance',
+    'numerical' => 'Numerique',
+];
+
+foreach ($sessions as $si => $session) {
+    $date = userdate($session[0]->timecreated, '%d/%m/%Y %H:%M');
+    $count = count($session);
+    $types = [];
+    foreach ($session as $sq) {
+        $t = $sq->qtype ?? 'multichoice';
+        $types[$t] = ($types[$t] ?? 0) + 1;
+    }
+    $type_parts = [];
+    foreach ($types as $t => $c) {
+        $label = $typelabels_render[$t] ?? $t;
+        $type_parts[] = "$c $label";
+    }
+    $type_str = implode(', ', $type_parts);
+
+    echo '<div style="background:#e9ecef; padding:10px 16px; border-radius:8px; margin:20px 0 8px; cursor:pointer;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === \'none\' ? \'\' : \'none\'">';
+    echo '<strong>Session du ' . $date . '</strong> &mdash; ' . $count . ' questions (' . $type_str . ') ';
+    echo '<span style="float:right;">&#9660;</span>';
     echo '</div>';
-    echo '<div class="card-body">';
-    $editable = in_array($q->status, ['pending', 'approved']);
-    if ($editable) {
-        echo '<p class="card-text"><strong><span class="editable-field" data-qid="' . $q->id . '" data-field="question" data-value="' . htmlspecialchars($q->question, ENT_QUOTES) . '" style="cursor:pointer; border-bottom:1px dashed #ccc;" title="Cliquer pour modifier">' . format_string($q->question) . '</span></strong></p>';
-    } else {
-        echo '<p class="card-text"><strong>' . format_string($q->question) . '</strong></p>';
-    }
+    echo '<div>'; // Session content wrapper.
 
-    // Render based on type.
-    switch ($qtype) {
-        case 'multichoice':
-            render_multichoice($q, $editable);
-            break;
-        case 'truefalse':
-            render_truefalse($q, $editable);
-            break;
-        case 'shortanswer':
-            render_shortanswer($q, $editable);
-            break;
-        case 'matching':
-            render_matching($q);
-            break;
-        case 'numerical':
-            render_numerical($q);
-            break;
-    }
+    foreach ($session as $q) {
+        $qtype = $q->qtype ?? 'multichoice';
 
-    // Show verification warning if question failed verification.
-    if (isset($q->verified) && $q->verified !== null && $q->verified !== '' && (int)$q->verified === 0 && !empty($q->verification_note)) {
-        echo '<div class="alert alert-danger mt-2 mb-2 py-1 px-2"><small><strong>Probl&egrave;me de v&eacute;rification :</strong> ' . format_string($q->verification_note) . '</small></div>';
-    }
-
-    if (!empty($q->explanation)) {
-        if ($editable) {
-            echo '<p class="text-muted mt-2"><em><span class="editable-field" data-qid="' . $q->id . '" data-field="explanation" data-value="' . htmlspecialchars($q->explanation, ENT_QUOTES) . '" style="cursor:pointer; border-bottom:1px dashed #ccc;" title="Cliquer pour modifier">' . format_string($q->explanation) . '</span></em></p>';
-        } else {
-            echo '<p class="text-muted mt-2"><em>' . format_string($q->explanation) . '</em></p>';
+        // Compute verified data attribute value.
+        $verified_val = $q->verified ?? null;
+        $verified_data = 'unverified';
+        if ($verified_val !== null && $verified_val !== '' && (int)$verified_val === 1) {
+            $verified_data = 'verified';
         }
+
+        $statusbadge = [
+            'pending' => '<span class="badge badge-warning bg-warning">En attente</span>',
+            'approved' => '<span class="badge badge-success bg-success">Approuvée</span>',
+        ][$q->status] ?? '';
+
+        $diffbadge = [
+            'easy' => '<span class="badge badge-info bg-info">Facile</span>',
+            'medium' => '<span class="badge badge-primary bg-primary">Moyen</span>',
+            'hard' => '<span class="badge badge-danger bg-danger">Difficile</span>',
+        ][$q->difficulty] ?? '';
+
+        $typebadge = [
+            'multichoice' => '<span class="badge badge-secondary bg-secondary">QCM</span>',
+            'truefalse' => '<span class="badge badge-dark bg-dark text-white">Vrai/Faux</span>',
+            'shortanswer' => '<span class="badge badge-light bg-light text-dark border">Réponse courte</span>',
+            'matching' => '<span class="badge badge-info bg-info">Correspondance</span>',
+            'numerical' => '<span class="badge badge-warning bg-warning">Numérique</span>',
+        ][$qtype] ?? '<span class="badge badge-secondary">' . $qtype . '</span>';
+
+        echo '<div class="card mb-3 question-card" data-qtype="' . htmlspecialchars($qtype) . '" data-status="' . htmlspecialchars($q->status) . '" data-verified="' . $verified_data . '">';
+        echo '<div class="card-header d-flex justify-content-between">';
+        // Verification badge.
+        $verifybadge = '';
+        if ($verified_val !== null && $verified_val !== '') {
+            if ((int)$verified_val === 1) {
+                $verifybadge = ' <span class="badge badge-success bg-success">V&eacute;rifi&eacute; &#10003;</span>';
+            } else {
+                $verifynote = htmlspecialchars($q->verification_note ?? '', ENT_QUOTES);
+                $verifybadge = ' <span class="badge badge-danger bg-danger" title="' . $verifynote . '">Non v&eacute;rifi&eacute; &#10007;</span>';
+            }
+        } else {
+            $verifybadge = ' <span class="badge badge-secondary bg-secondary">Non v&eacute;rifi&eacute;</span>';
+        }
+
+        echo '<span><strong>Q' . $q->id . '</strong> ' . $typebadge . ' ' . $diffbadge . ' ' . $statusbadge . $verifybadge . '</span>';
+        echo '</div>';
+        echo '<div class="card-body">';
+        $editable = in_array($q->status, ['pending', 'approved']);
+        if ($editable) {
+            echo '<p class="card-text"><strong><span class="editable-field" data-qid="' . $q->id . '" data-field="question" data-value="' . htmlspecialchars($q->question, ENT_QUOTES) . '" style="cursor:pointer; border-bottom:1px dashed #ccc;" title="Cliquer pour modifier">' . format_string($q->question) . '</span></strong></p>';
+        } else {
+            echo '<p class="card-text"><strong>' . format_string($q->question) . '</strong></p>';
+        }
+
+        // Render based on type.
+        switch ($qtype) {
+            case 'multichoice':
+                render_multichoice($q, $editable);
+                break;
+            case 'truefalse':
+                render_truefalse($q, $editable);
+                break;
+            case 'shortanswer':
+                render_shortanswer($q, $editable);
+                break;
+            case 'matching':
+                render_matching($q);
+                break;
+            case 'numerical':
+                render_numerical($q);
+                break;
+        }
+
+        // Show verification warning if question failed verification.
+        if (isset($q->verified) && $q->verified !== null && $q->verified !== '' && (int)$q->verified === 0 && !empty($q->verification_note)) {
+            echo '<div class="alert alert-danger mt-2 mb-2 py-1 px-2"><small><strong>Probl&egrave;me de v&eacute;rification :</strong> ' . format_string($q->verification_note) . '</small></div>';
+        }
+
+        if (!empty($q->explanation)) {
+            if ($editable) {
+                echo '<p class="text-muted mt-2"><em><span class="editable-field" data-qid="' . $q->id . '" data-field="explanation" data-value="' . htmlspecialchars($q->explanation, ENT_QUOTES) . '" style="cursor:pointer; border-bottom:1px dashed #ccc;" title="Cliquer pour modifier">' . format_string($q->explanation) . '</span></em></p>';
+            } else {
+                echo '<p class="text-muted mt-2"><em>' . format_string($q->explanation) . '</em></p>';
+            }
+        }
+
+        if ($q->status === 'pending') {
+            $approveurl = new moodle_url($PAGE->url, ['action' => 'approve', 'qid' => $q->id, 'sesskey' => sesskey()]);
+            $rejecturl = new moodle_url($PAGE->url, ['action' => 'reject', 'qid' => $q->id, 'sesskey' => sesskey()]);
+            echo '<a href="' . $approveurl . '" class="btn btn-sm btn-success" aria-label="Approuver la question ' . $q->id . '">Approuver</a> ';
+            echo '<a href="' . $rejecturl . '" class="btn btn-sm btn-danger" aria-label="Rejeter la question ' . $q->id . '">Rejeter</a> ';
+        }
+        if (in_array($q->status, ['pending', 'approved'])) {
+            echo '<button class="btn btn-warning btn-sm" onclick="regenerateQuestion(' . $q->id . ', this)" aria-label="Regenerer la question ' . $q->id . '">Regenerer</button>';
+        }
+
+        echo '</div></div>';
     }
 
-    if ($q->status === 'pending') {
-        $approveurl = new moodle_url($PAGE->url, ['action' => 'approve', 'qid' => $q->id, 'sesskey' => sesskey()]);
-        $rejecturl = new moodle_url($PAGE->url, ['action' => 'reject', 'qid' => $q->id, 'sesskey' => sesskey()]);
-        echo '<a href="' . $approveurl . '" class="btn btn-sm btn-success" aria-label="Approuver la question ' . $q->id . '">Approuver</a> ';
-        echo '<a href="' . $rejecturl . '" class="btn btn-sm btn-danger" aria-label="Rejeter la question ' . $q->id . '">Rejeter</a> ';
-    }
-    if (in_array($q->status, ['pending', 'approved'])) {
-        echo '<button class="btn btn-warning btn-sm" onclick="regenerateQuestion(' . $q->id . ', this)" aria-label="Regenerer la question ' . $q->id . '">Regenerer</button>';
-    }
-
-    echo '</div></div>';
+    echo '</div>'; // End session content wrapper.
 }
 
 if (empty($questions)) {

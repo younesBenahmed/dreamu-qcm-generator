@@ -113,6 +113,17 @@ $resources = \local_dreamu_qcm\course_content::get_course_resources($courseid, t
 echo '<form method="post" action="" id="qcm-form">';
 echo '<input type="hidden" name="sesskey" value="' . sesskey() . '">';
 
+// Progress bar / step indicators.
+echo '<div style="display:flex; justify-content:center; gap:8px; margin-bottom:32px;">';
+echo '    <div id="step-indicator-1" style="padding:8px 20px; border-radius:20px; font-weight:600; font-size:14px; background:#0071e3; color:white;">1. Contenu</div>';
+echo '    <div style="padding:8px 4px; color:#ccc;">&#8250;</div>';
+echo '    <div id="step-indicator-2" style="padding:8px 20px; border-radius:20px; font-weight:600; font-size:14px; background:#f0f0f0; color:#666;">2. Configuration</div>';
+echo '    <div style="padding:8px 4px; color:#ccc;">&#8250;</div>';
+echo '    <div id="step-indicator-3" style="padding:8px 20px; border-radius:20px; font-weight:600; font-size:14px; background:#f0f0f0; color:#666;">3. Confirmation</div>';
+echo '</div>';
+
+// --- Step 1: Content selection ---
+echo '<div id="wizard-step-1">';
 echo '<h3>' . get_string('select_resources', 'local_dreamu_qcm') . '</h3>';
 
 if (empty($resources)) {
@@ -137,7 +148,14 @@ if (empty($resources)) {
     echo '</div>';
 }
 
-echo '<hr>';
+echo '<div style="margin-top:20px;">';
+echo '<button type="button" class="btn btn-outline-secondary btn-lg mr-2" id="btn-preview" onclick="previewContent()" aria-label="Prévisualiser le contenu extrait">Prévisualiser le contenu</button> ';
+echo '<button type="button" class="btn btn-primary btn-lg" onclick="wizardNext(2)">Suivant</button>';
+echo '</div>';
+echo '</div>'; // end wizard-step-1
+
+// --- Step 2: Configuration ---
+echo '<div id="wizard-step-2" style="display:none;">';
 
 // Question types with individual counts.
 echo '<div class="card mb-3"><div class="card-body">';
@@ -200,8 +218,21 @@ echo '<small class="form-text text-muted">Optionnel : guidez l\'IA sur les comp&
 echo '</div>';
 echo '</div>';
 
-echo '<button type="button" class="btn btn-outline-secondary btn-lg mr-2" id="btn-preview" onclick="previewContent()" aria-label="Prévisualiser le contenu extrait">Prévisualiser le contenu</button> ';
+echo '<div style="margin-top:20px;">';
+echo '<button type="button" class="btn btn-secondary btn-lg mr-2" onclick="wizardNext(1)">Précédent</button> ';
+echo '<button type="button" class="btn btn-primary btn-lg" onclick="wizardNext(3)">Suivant</button>';
+echo '</div>';
+echo '</div>'; // end wizard-step-2
+
+// --- Step 3: Confirmation ---
+echo '<div id="wizard-step-3" style="display:none;">';
+echo '<h3>Résumé avant génération</h3>';
+echo '<div id="wizard-summary" style="background:#f8f9fa; border:1px solid #dee2e6; border-radius:8px; padding:20px; margin-bottom:20px; font-size:16px;"></div>';
+echo '<div style="margin-top:20px;">';
+echo '<button type="button" class="btn btn-secondary btn-lg mr-2" onclick="wizardNext(2)">Précédent</button> ';
 echo '<button type="submit" class="btn btn-primary btn-lg" id="btn-generate" aria-label="Lancer la génération des questions">' . get_string('generate', 'local_dreamu_qcm') . '</button>';
+echo '</div>';
+echo '</div>'; // end wizard-step-3
 
 // Preview modal.
 echo '
@@ -218,6 +249,51 @@ echo '
 
 echo '
 <script>
+function wizardNext(step) {
+    document.querySelectorAll(\'[id^="wizard-step-"]\').forEach(function(el) { el.style.display = "none"; });
+    document.getElementById("wizard-step-" + step).style.display = "";
+
+    // Update indicators.
+    for (var i = 1; i <= 3; i++) {
+        var ind = document.getElementById("step-indicator-" + i);
+        if (i === step) {
+            ind.style.background = "#0071e3";
+            ind.style.color = "white";
+        } else if (i < step) {
+            ind.style.background = "#d4edda";
+            ind.style.color = "#155724";
+        } else {
+            ind.style.background = "#f0f0f0";
+            ind.style.color = "#666";
+        }
+    }
+
+    // Build summary for step 3.
+    if (step === 3) {
+        var summary = "";
+        var total = 0;
+        document.querySelectorAll(".qtype-count").forEach(function(input) {
+            var val = parseInt(input.value) || 0;
+            if (val > 0) {
+                total += val;
+                summary += val + " " + input.dataset.type + ", ";
+            }
+        });
+        var checked = document.querySelectorAll("input[name=\'cmids[]\']:checked").length;
+        var diff = document.querySelector("select[name=\'difficulty\']").value;
+        var verify = document.querySelector("input[name=\'verify\']");
+        var verifyText = verify && verify.checked ? "Oui" : "Non";
+
+        document.getElementById("wizard-summary").innerHTML =
+            "<p><strong>" + total + " questions</strong> (" + summary.slice(0, -2) + ")</p>" +
+            "<p>A partir de <strong>" + checked + " ressources</strong> selectionnees</p>" +
+            "<p>Difficulte : <strong>" + diff + "</strong></p>" +
+            "<p>Verification multi-modeles : <strong>" + verifyText + "</strong></p>";
+    }
+
+    window.scrollTo(0, 0);
+}
+
 function previewContent() {
     var cmids = [];
     document.querySelectorAll("input[name=\'cmids[]\']:checked").forEach(function(cb) { cmids.push(cb.value); });
