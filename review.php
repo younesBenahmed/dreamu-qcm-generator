@@ -217,7 +217,10 @@ foreach ($questions as $q) {
         $approveurl = new moodle_url($PAGE->url, ['action' => 'approve', 'qid' => $q->id, 'sesskey' => sesskey()]);
         $rejecturl = new moodle_url($PAGE->url, ['action' => 'reject', 'qid' => $q->id, 'sesskey' => sesskey()]);
         echo '<a href="' . $approveurl . '" class="btn btn-sm btn-success" aria-label="Approuver la question ' . $q->id . '">Approuver</a> ';
-        echo '<a href="' . $rejecturl . '" class="btn btn-sm btn-danger" aria-label="Rejeter la question ' . $q->id . '">Rejeter</a>';
+        echo '<a href="' . $rejecturl . '" class="btn btn-sm btn-danger" aria-label="Rejeter la question ' . $q->id . '">Rejeter</a> ';
+    }
+    if (in_array($q->status, ['pending', 'approved'])) {
+        echo '<button class="btn btn-warning btn-sm" onclick="regenerateQuestion(' . $q->id . ', this)" aria-label="Regenerer la question ' . $q->id . '">Regenerer</button>';
     }
 
     echo '</div></div>';
@@ -230,6 +233,30 @@ if (empty($questions)) {
 
 ?>
 <script>
+function regenerateQuestion(qid, btn) {
+    if (!confirm('Regenerer cette question ? L\'ancienne sera remplacee.')) return;
+    btn.disabled = true;
+    btn.textContent = 'Regeneration...';
+
+    fetch(M.cfg.wwwroot + '/local/dreamu_qcm/ajax_regenerate.php', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'qid=' + qid + '&courseid=' + COURSEID + '&sesskey=' + M.cfg.sesskey
+    }).then(function(r) { return r.json(); }).then(function(data) {
+        if (data.status === 'ok') {
+            window.location.reload();
+        } else {
+            alert('Erreur: ' + data.message);
+            btn.disabled = false;
+            btn.textContent = 'Regenerer';
+        }
+    }).catch(function() {
+        alert('Erreur reseau');
+        btn.disabled = false;
+        btn.textContent = 'Regenerer';
+    });
+}
+
 function applyFilters() {
     var typeFilter = document.getElementById('filter-type').value;
     var statusFilter = document.getElementById('filter-status').value;
