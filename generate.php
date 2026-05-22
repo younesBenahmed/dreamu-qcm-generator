@@ -146,6 +146,7 @@ if (empty($resources)) {
         echo '</div>';
     }
     echo '</div>';
+    echo '</div>'; // close form-group
 }
 
 echo '<div style="margin-top:20px;">';
@@ -251,7 +252,7 @@ echo '
 <script>
 function wizardNext(step) {
     document.querySelectorAll(\'[id^="wizard-step-"]\').forEach(function(el) { el.style.display = "none"; });
-    document.getElementById("wizard-step-" + step).style.display = "";
+    document.getElementById("wizard-step-" + step).style.display = "block";
 
     // Update indicators.
     for (var i = 1; i <= 3; i++) {
