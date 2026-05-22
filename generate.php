@@ -50,6 +50,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && confirm_sesskey()) {
     }
 
     // Generate questions — one type at a time with exact counts.
+    // Extend PHP time limit: each type can take 60s+ for generation + verification.
+    $typetotal = count(array_filter($typecounts, fn($c) => $c > 0));
+    set_time_limit(max(300, $typetotal * 120 + ($verify ? $total * 60 : 0)));
+
     try {
         $generator = new \local_dreamu_qcm\qcm_generator();
         $allquestions = [];
@@ -271,25 +275,43 @@ function wizardNext(step) {
 
     // Build summary for step 3.
     if (step === 3) {
+        var typeLabels = {
+            "multichoice": "Choix multiples",
+            "truefalse": "Vrai/Faux",
+            "shortanswer": "R\u00e9ponse courte",
+            "matching": "Correspondance",
+            "numerical": "Num\u00e9rique"
+        };
+        var diffLabels = {
+            "easy": "Facile",
+            "medium": "Moyen",
+            "hard": "Difficile"
+        };
         var summary = "";
         var total = 0;
         document.querySelectorAll(".qtype-count").forEach(function(input) {
             var val = parseInt(input.value) || 0;
             if (val > 0) {
                 total += val;
-                summary += val + " " + input.dataset.type + ", ";
+                var label = typeLabels[input.dataset.type] || input.dataset.type;
+                summary += val + " " + label + ", ";
             }
         });
         var checked = document.querySelectorAll("input[name=\'cmids[]\']:checked").length;
         var diff = document.querySelector("select[name=\'difficulty\']").value;
+        var diffLabel = diffLabels[diff] || diff;
         var verify = document.querySelector("input[name=\'verify\']");
         var verifyText = verify && verify.checked ? "Oui" : "Non";
+        var instructions = document.querySelector("textarea[name=\'custom_instructions\']").value.trim();
 
-        document.getElementById("wizard-summary").innerHTML =
-            "<p><strong>" + total + " questions</strong> (" + summary.slice(0, -2) + ")</p>" +
-            "<p>A partir de <strong>" + checked + " ressources</strong> selectionnees</p>" +
-            "<p>Difficulte : <strong>" + diff + "</strong></p>" +
-            "<p>Verification multi-modeles : <strong>" + verifyText + "</strong></p>";
+        var html = "<p><strong>" + total + " questions</strong> (" + summary.slice(0, -2) + ")</p>" +
+            "<p>\u00c0 partir de <strong>" + checked + " ressource" + (checked > 1 ? "s" : "") + "</strong> s\u00e9lectionn\u00e9e" + (checked > 1 ? "s" : "") + "</p>" +
+            "<p>Difficult\u00e9 : <strong>" + diffLabel + "</strong></p>" +
+            "<p>V\u00e9rification multi-mod\u00e8les : <strong>" + verifyText + "</strong></p>";
+        if (instructions) {
+            html += "<p>Instructions : <em>" + instructions.substring(0, 200) + (instructions.length > 200 ? "..." : "") + "</em></p>";
+        }
+        document.getElementById("wizard-summary").innerHTML = html;
     }
 
     window.scrollTo(0, 0);
@@ -313,23 +335,21 @@ function previewContent() {
 </script>';
 echo '</form>';
 
-// Progress overlay (hidden by default).
+// Loading overlay (hidden by default).
 echo '
 <div id="progress-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:9999; justify-content:center; align-items:center;">
     <div style="background:white; border-radius:12px; padding:40px; max-width:500px; width:90%; text-align:center; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-        <h3 style="margin-bottom:20px;">Génération en cours...</h3>
-        <div style="background:#e9ecef; border-radius:10px; height:30px; overflow:hidden; margin-bottom:15px;">
-            <div id="progress-bar" style="background:linear-gradient(90deg, #0d6efd, #0dcaf0); height:100%; width:0%; border-radius:10px; transition:width 1s linear;"></div>
+        <h3 style="margin-bottom:20px;">G&eacute;n&eacute;ration en cours...</h3>
+        <div class="spinner-border text-primary" role="status" style="width:3rem; height:3rem; margin-bottom:20px;">
+            <span class="sr-only">Chargement...</span>
         </div>
-        <p id="progress-text" style="font-size:18px; color:#333; margin-bottom:5px;">0%</p>
-        <p id="progress-time" style="font-size:14px; color:#666;">Temps estimé : calcul en cours...</p>
-        <p id="progress-type" style="font-size:13px; color:#999;"></p>
+        <p id="progress-time" style="font-size:14px; color:#666;"></p>
         <p style="font-size:12px; color:#aaa; margin-top:15px;">Ne fermez pas cette page</p>
     </div>
 </div>
 ';
 
-// JavaScript for total counter + progress bar.
+// JavaScript for total counter + loading overlay.
 echo '
 <script>
 document.addEventListener("DOMContentLoaded", function() {
@@ -345,64 +365,24 @@ document.addEventListener("DOMContentLoaded", function() {
     inputs.forEach(function(inp) { inp.addEventListener("input", updateTotal); });
     updateTotal();
 
-    // Progress bar on form submit.
+    // Show overlay on form submit.
     var form = document.getElementById("qcm-form");
     var overlay = document.getElementById("progress-overlay");
-    var bar = document.getElementById("progress-bar");
-    var textEl = document.getElementById("progress-text");
     var timeEl = document.getElementById("progress-time");
-    var typeEl = document.getElementById("progress-type");
 
     form.addEventListener("submit", function() {
-        // Count how many types are active (count > 0).
-        var activeTypes = [];
-        var typeNames = {
-            "multichoice": "Choix multiples",
-            "truefalse": "Vrai / Faux",
-            "shortanswer": "Réponse courte",
-            "matching": "Correspondance",
-            "numerical": "Numérique"
-        };
-        inputs.forEach(function(inp) {
-            var count = parseInt(inp.value) || 0;
-            if (count > 0) {
-                activeTypes.push({ type: inp.dataset.type, name: typeNames[inp.dataset.type] || inp.dataset.type, count: count });
-            }
-        });
-
-        if (activeTypes.length === 0) return;
-
-        // Show overlay.
         overlay.style.display = "flex";
 
-        // Estimate: ~30 seconds per type.
-        var secsPerType = 30;
-        var totalSecs = activeTypes.length * secsPerType;
+        // Simple elapsed timer.
         var startTime = Date.now();
-        var currentTypeIndex = 0;
-
-        function updateProgress() {
-            var elapsed = (Date.now() - startTime) / 1000;
-            var pct = Math.min(95, (elapsed / totalSecs) * 100);
-
-            // Which type are we on?
-            currentTypeIndex = Math.min(Math.floor(elapsed / secsPerType), activeTypes.length - 1);
-            var currentType = activeTypes[currentTypeIndex];
-
-            bar.style.width = pct + "%";
-            textEl.textContent = Math.round(pct) + "%";
-
-            var remaining = Math.max(0, Math.round(totalSecs - elapsed));
-            var mins = Math.floor(remaining / 60);
-            var secs = remaining % 60;
-            timeEl.textContent = "Temps restant estimé : " + (mins > 0 ? mins + "min " : "") + secs + "s";
-            typeEl.textContent = "Génération : " + currentType.name + " (" + currentType.count + " questions)  [" + (currentTypeIndex + 1) + "/" + activeTypes.length + "]";
-
-            if (pct < 95) {
-                requestAnimationFrame(updateProgress);
-            }
+        function updateTimer() {
+            var elapsed = Math.round((Date.now() - startTime) / 1000);
+            var mins = Math.floor(elapsed / 60);
+            var secs = elapsed % 60;
+            timeEl.textContent = "Temps &eacute;coul&eacute; : " + (mins > 0 ? mins + " min " : "") + secs + " s";
+            requestAnimationFrame(updateTimer);
         }
-        requestAnimationFrame(updateProgress);
+        requestAnimationFrame(updateTimer);
     });
 });
 </script>

@@ -154,8 +154,31 @@ $typelabels_render = [
     'numerical' => 'Numerique',
 ];
 
+$today = usergetmidnight(time());
+$yesterday = $today - 86400;
+$last_date_label = '';
+
 foreach ($sessions as $si => $session) {
-    $date = userdate($session[0]->timecreated, '%d/%m/%Y %H:%M');
+    $session_time = $session[0]->timecreated;
+    $session_day = usergetmidnight($session_time);
+
+    // Date group header.
+    if ($session_day >= $today) {
+        $date_label = "Aujourd'hui";
+    } else if ($session_day >= $yesterday) {
+        $date_label = "Hier";
+    } else if ($session_day >= $today - 7 * 86400) {
+        $date_label = userdate($session_time, '%A %d %B');
+    } else {
+        $date_label = userdate($session_time, '%d %B %Y');
+    }
+
+    if ($date_label !== $last_date_label) {
+        echo '<h4 style="margin:28px 0 8px; padding-bottom:6px; border-bottom:2px solid #dee2e6; color:#495057; font-size:1.1em;">' . ucfirst($date_label) . '</h4>';
+        $last_date_label = $date_label;
+    }
+
+    $date = userdate($session_time, '%H:%M');
     $count = count($session);
     $types = [];
     foreach ($session as $sq) {
@@ -169,8 +192,8 @@ foreach ($sessions as $si => $session) {
     }
     $type_str = implode(', ', $type_parts);
 
-    echo '<div style="background:#e9ecef; padding:10px 16px; border-radius:8px; margin:20px 0 8px; cursor:pointer;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === \'none\' ? \'\' : \'none\'">';
-    echo '<strong>Session du ' . $date . '</strong> &mdash; ' . $count . ' questions (' . $type_str . ') ';
+    echo '<div style="background:#e9ecef; padding:10px 16px; border-radius:8px; margin:12px 0 8px; cursor:pointer;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === \'none\' ? \'\' : \'none\'">';
+    echo '<strong>Session de ' . $date . '</strong> &mdash; ' . $count . ' questions (' . $type_str . ') ';
     echo '<span style="float:right;">&#9660;</span>';
     echo '</div>';
     echo '<div>'; // Session content wrapper.
