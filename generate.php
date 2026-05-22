@@ -90,11 +90,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && confirm_sesskey()) {
             $verified = $generator->verify_questions(array_values($stored), $content);
 
             foreach ($verified as $vq) {
-                $update = new stdClass();
-                $update->id = $vq->id;
-                $update->verified = $vq->verified === true ? 1 : ($vq->verified === false ? 0 : null);
-                $update->verification_note = $vq->verification_note ?? '';
-                $DB->update_record('local_dreamu_qcm', $update);
+                $vflag = $vq->verified === true ? 1 : ($vq->verified === false ? 0 : -1);
+                $vnote = $vq->verification_note ?? '';
+                $DB->set_field('local_dreamu_qcm', 'verified', $vflag, ['id' => $vq->id]);
+                if (!empty($vnote)) {
+                    $DB->set_field('local_dreamu_qcm', 'verification_note', $vnote, ['id' => $vq->id]);
+                }
             }
         }
 
@@ -245,7 +246,7 @@ echo '
     <div style="background:white; border-radius:12px; padding:30px; max-width:700px; width:90%; max-height:80vh; overflow-y:auto; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
             <h4 style="margin:0;">Contenu qui sera envoyé à l\'IA</h4>
-            <button onclick="document.getElementById(\'preview-modal\').style.display=\'none\'" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
+            <button type="button" onclick="document.getElementById(\'preview-modal\').style.display=\'none\'" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
         </div>
         <div id="preview-content" style="background:#f8f9fa; border:1px solid #dee2e6; border-radius:8px; padding:16px; white-space:pre-wrap; font-family:monospace; font-size:13px; max-height:50vh; overflow-y:auto;">Chargement...</div>
         <p id="preview-stats" style="margin-top:12px; color:#6c757d; font-size:13px;"></p>
@@ -379,7 +380,7 @@ document.addEventListener("DOMContentLoaded", function() {
             var elapsed = Math.round((Date.now() - startTime) / 1000);
             var mins = Math.floor(elapsed / 60);
             var secs = elapsed % 60;
-            timeEl.textContent = "Temps &eacute;coul&eacute; : " + (mins > 0 ? mins + " min " : "") + secs + " s";
+            timeEl.textContent = "Temps ecoule : " + (mins > 0 ? mins + " min " : "") + secs + " s";
             requestAnimationFrame(updateTimer);
         }
         requestAnimationFrame(updateTimer);

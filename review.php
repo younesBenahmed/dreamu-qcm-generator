@@ -198,7 +198,9 @@ foreach ($sessions as $si => $session) {
     echo '</div>';
     echo '<div>'; // Session content wrapper.
 
+    $qnum = 0;
     foreach ($session as $q) {
+        $qnum++;
         $qtype = $q->qtype ?? 'multichoice';
 
         // Compute verified data attribute value.
@@ -242,7 +244,7 @@ foreach ($sessions as $si => $session) {
             $verifybadge = ' <span class="badge badge-secondary bg-secondary">Non v&eacute;rifi&eacute;</span>';
         }
 
-        echo '<span><strong>Q' . $q->id . '</strong> ' . $typebadge . ' ' . $diffbadge . ' ' . $statusbadge . $verifybadge . '</span>';
+        echo '<span><strong>Q' . $qnum . '</strong> ' . $typebadge . ' ' . $diffbadge . ' ' . $statusbadge . $verifybadge . '</span>';
         echo '</div>';
         echo '<div class="card-body">';
         $editable = in_array($q->status, ['pending', 'approved']);
