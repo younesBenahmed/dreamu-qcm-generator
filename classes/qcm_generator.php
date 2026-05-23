@@ -56,15 +56,18 @@ class qcm_generator {
             // Use a different chunk for each type to ensure balanced coverage.
             $chunk_idx = array_search($qtype, array_keys($distribution)) % count($content_chunks);
             $chunk = $content_chunks[$chunk_idx];
-            $user = "Course content:\n\n{$chunk}\n\nGenerate {$count} questions in JSON:";
+            $user = "=== COURSE CONTENT (use ONLY this to create questions) ===\n\n{$chunk}\n\n"
+                . "=== END OF COURSE CONTENT ===\n\n"
+                . "Generate EXACTLY {$count} {$qtype} questions based STRICTLY on the course content above.\n"
+                . "Do NOT use any knowledge outside this content. JSON:";
 
             // Temperature per type: low for factual (truefalse, numerical), higher for creative (multichoice).
             $temp_by_type = [
-                'multichoice' => 0.7,
-                'truefalse' => 0.3,
-                'shortanswer' => 0.4,
-                'matching' => 0.5,
-                'numerical' => 0.2,
+                'multichoice' => 0.3,
+                'truefalse' => 0.2,
+                'shortanswer' => 0.2,
+                'matching' => 0.3,
+                'numerical' => 0.1,
             ];
             $temperature = $temp_by_type[$qtype] ?? 0.7;
 
@@ -202,87 +205,32 @@ class qcm_generator {
      * Build the system prompt for each question type.
      */
     private function build_prompt(string $qtype, int $count, string $diffname, string $langname, string $custom_instructions = ''): string {
-        $base = "You are a university professor creating exam questions. "
+        $base = "You are a university professor creating exam questions STRICTLY from the course content provided.\n\n"
+            . "ABSOLUTE RULES:\n"
+            . "- ONLY create questions about topics, concepts, formulas, and examples that appear in the provided course content.\n"
+            . "- NEVER invent or add topics not covered in the course. If the course is about descriptive statistics, do NOT ask about probability, hypothesis testing, or regression.\n"
+            . "- Every question MUST be answerable using ONLY the information in the course content.\n"
+            . "- Use the SAME vocabulary, notation, and terminology as the course.\n"
+            . "- Match the level of the course. If the course uses simple examples, do NOT create advanced questions.\n"
+            . "- If the course content is about drawing diagrams, ask about diagrams. If it is about calculations, ask about calculations.\n\n"
             . "Difficulty: {$diffname}. Language: {$langname}. "
-            . "Respond ONLY in valid JSON array format. ";
+            . "Respond ONLY in valid JSON array format.\n\n";
 
-        $prompt = '';
+        $formats = [
+            'multichoice' => "Format: [{\"type\": \"multichoice\", \"question\": \"...\", \"a\": \"...\", \"b\": \"...\", \"c\": \"...\", \"d\": \"...\", \"correct\": \"a\", \"explanation\": \"...\"}]\n"
+                . "Rules: 4 options (a,b,c,d), 'correct' = letter. Wrong answers must be plausible but clearly wrong based on the course content.",
+            'truefalse' => "Format: [{\"type\": \"truefalse\", \"question\": \"...\", \"correct\": true, \"explanation\": \"...\"}]\n"
+                . "Rules: 'correct' is boolean. Mix true and false answers. Statements must be verifiable from the course content.",
+            'shortanswer' => "Format: [{\"type\": \"shortanswer\", \"question\": \"...\", \"correct\": \"answer\", \"alternatives\": [\"alt1\"], \"explanation\": \"...\"}]\n"
+                . "Rules: 'correct' is 1-3 words. 'alternatives' are synonyms. Answer must appear in the course content.",
+            'matching' => "Format: [{\"type\": \"matching\", \"question\": \"...\", \"pairs\": [{\"term\": \"...\", \"definition\": \"...\"}], \"explanation\": \"...\"}]\n"
+                . "Rules: 4-6 pairs. All terms and definitions must come from the course content.",
+            'numerical' => "Format: [{\"type\": \"numerical\", \"question\": \"...\", \"correct\": NUMBER, \"tolerance\": 0.01, \"unit\": \"\", \"explanation\": \"...\"}]\n"
+                . "Rules: Use calculations and values from the course content. Show the method in the explanation.",
+        ];
 
-        switch ($qtype) {
-            case 'multichoice':
-                $prompt = $base . "Generate EXACTLY {$count} multiple choice questions.\n"
-                    . "Format: [{\"type\": \"multichoice\", \"question\": \"...\", \"a\": \"...\", \"b\": \"...\", \"c\": \"...\", \"d\": \"...\", \"correct\": \"a\", \"explanation\": \"...\"}]\n"
-                    . "Rules:\n"
-                    . "- 4 options (a, b, c, d), 'correct' = letter of right answer\n"
-                    . "- Wrong answers must be plausible\n"
-                    . "- All text in {$langname}\n\n"
-                    . "Example of a good question:\n"
-                    . "[{\"type\": \"multichoice\", \"question\": \"Quelle est la moyenne d'un échantillon {2, 4, 6} ?\", \"a\": \"3\", \"b\": \"4\", \"c\": \"5\", \"d\": \"6\", \"correct\": \"b\", \"explanation\": \"La moyenne est (2+4+6)/3 = 12/3 = 4\"}]\n\n"
-                    . "Another example:\n"
-                    . "[{\"type\": \"multichoice\", \"question\": \"Quel indicateur mesure la dispersion des données autour de la moyenne ?\", \"a\": \"La médiane\", \"b\": \"Le mode\", \"c\": \"L'écart-type\", \"d\": \"Le quartile\", \"correct\": \"c\", \"explanation\": \"L'écart-type mesure la dispersion des valeurs autour de la moyenne arithmétique.\"}]";
-                break;
-
-            case 'truefalse':
-                $prompt = $base . "Generate EXACTLY {$count} true/false questions.\n"
-                    . "Format: [{\"type\": \"truefalse\", \"question\": \"...\", \"correct\": true, \"explanation\": \"...\"}]\n"
-                    . "Rules:\n"
-                    . "- 'correct' is true or false (boolean)\n"
-                    . "- Questions should be clear statements that are definitively true or false\n"
-                    . "- Mix true and false answers (not all the same)\n"
-                    . "- All text in {$langname}\n\n"
-                    . "Example of a good question:\n"
-                    . "[{\"type\": \"truefalse\", \"question\": \"La médiane d'un échantillon est toujours égale à la moyenne.\", \"correct\": false, \"explanation\": \"La médiane et la moyenne ne sont égales que dans une distribution parfaitement symétrique.\"}]\n\n"
-                    . "Another example:\n"
-                    . "[{\"type\": \"truefalse\", \"question\": \"La variance est le carré de l'écart-type.\", \"correct\": true, \"explanation\": \"Par définition, la variance est sigma² et l'écart-type est sigma, donc la variance est bien le carré de l'écart-type.\"}]";
-                break;
-
-            case 'shortanswer':
-                $prompt = $base . "Generate EXACTLY {$count} short answer questions.\n"
-                    . "Format: [{\"type\": \"shortanswer\", \"question\": \"...\", \"correct\": \"the answer\", \"alternatives\": [\"alt1\", \"alt2\"], \"explanation\": \"...\"}]\n"
-                    . "Rules:\n"
-                    . "- 'correct' is the main expected answer (1-3 words)\n"
-                    . "- 'alternatives' are other acceptable answers (synonyms, abbreviations)\n"
-                    . "- Questions should have a clear, unambiguous short answer\n"
-                    . "- Good for: definitions, names, specific terms, formulas\n"
-                    . "- All text in {$langname}\n\n"
-                    . "Example of a good question:\n"
-                    . "[{\"type\": \"shortanswer\", \"question\": \"Comment appelle-t-on la valeur qui apparaît le plus fréquemment dans un échantillon ?\", \"correct\": \"le mode\", \"alternatives\": [\"mode\", \"Mode\"], \"explanation\": \"Le mode est la valeur la plus fréquente dans une série statistique.\"}]\n\n"
-                    . "Another example:\n"
-                    . "[{\"type\": \"shortanswer\", \"question\": \"Quelle mesure de tendance centrale divise un échantillon ordonné en deux parties égales ?\", \"correct\": \"la médiane\", \"alternatives\": [\"médiane\", \"Médiane\"], \"explanation\": \"La médiane est la valeur qui sépare la moitié inférieure de la moitié supérieure d'un échantillon ordonné.\"}]";
-                break;
-
-            case 'matching':
-                $prompt = $base . "Generate EXACTLY {$count} matching questions.\n"
-                    . "Format: [{\"type\": \"matching\", \"question\": \"Match the following:\", \"pairs\": [{\"term\": \"...\", \"definition\": \"...\"}], \"explanation\": \"...\"}]\n"
-                    . "Rules:\n"
-                    . "- Each question has 4-6 pairs of term/definition\n"
-                    . "- Terms on the left, definitions on the right\n"
-                    . "- Good for: vocabulary, concept-definition, cause-effect\n"
-                    . "- All text in {$langname}\n\n"
-                    . "Example of a good question:\n"
-                    . "[{\"type\": \"matching\", \"question\": \"Associez chaque mesure statistique à sa définition :\", \"pairs\": [{\"term\": \"Moyenne\", \"definition\": \"Somme des valeurs divisée par le nombre de valeurs\"}, {\"term\": \"Médiane\", \"definition\": \"Valeur centrale d'un échantillon ordonné\"}, {\"term\": \"Mode\", \"definition\": \"Valeur la plus fréquente\"}, {\"term\": \"Étendue\", \"definition\": \"Différence entre la valeur maximale et minimale\"}], \"explanation\": \"Ces quatre mesures sont les indicateurs fondamentaux de la statistique descriptive.\"}]";
-                break;
-
-            case 'numerical':
-                $prompt = $base . "Generate EXACTLY {$count} numerical answer questions.\n"
-                    . "Format: [{\"type\": \"numerical\", \"question\": \"...\", \"correct\": 42.5, \"tolerance\": 0.1, \"unit\": \"kg\", \"explanation\": \"...\"}]\n"
-                    . "Rules:\n"
-                    . "- 'correct' is the numeric answer\n"
-                    . "- 'tolerance' is the acceptable margin of error\n"
-                    . "- 'unit' is the expected unit (optional)\n"
-                    . "- Good for: calculations, measurements, quantities\n"
-                    . "- All text in {$langname}\n\n"
-                    . "Example of a good question:\n"
-                    . "[{\"type\": \"numerical\", \"question\": \"Calculez la variance de l'échantillon {2, 4, 6}. La moyenne est 4.\", \"correct\": 2.67, \"tolerance\": 0.01, \"unit\": \"\", \"explanation\": \"Variance = [(2-4)² + (4-4)² + (6-4)²] / 3 = [4 + 0 + 4] / 3 = 8/3 = 2.67\"}]\n\n"
-                    . "Another example:\n"
-                    . "[{\"type\": \"numerical\", \"question\": \"Quel est l'écart-type de la série {10, 20, 30} ?\", \"correct\": 8.16, \"tolerance\": 0.01, \"unit\": \"\", \"explanation\": \"Moyenne = 20, Variance = [(10-20)² + (20-20)² + (30-20)²]/3 = 200/3 = 66.67, Écart-type = sqrt(66.67) = 8.16\"}]";
-                break;
-
-            default:
-                $prompt = $base . "Generate EXACTLY {$count} multiple choice questions.\n"
-                    . "Format: [{\"type\": \"multichoice\", \"question\": \"...\", \"a\": \"...\", \"b\": \"...\", \"c\": \"...\", \"d\": \"...\", \"correct\": \"a\", \"explanation\": \"...\"}]";
-                break;
-        }
+        $format = $formats[$qtype] ?? $formats['multichoice'];
+        $prompt = $base . "Generate EXACTLY {$count} {$qtype} questions.\n{$format}\nAll text in {$langname}.\nRESPOND ONLY WITH THE JSON ARRAY.";
 
         if (!empty($custom_instructions)) {
             $prompt .= "\n\nINSTRUCTIONS SPECIFIQUES DU PROFESSEUR:\n" . $custom_instructions . "\n";
