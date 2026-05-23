@@ -42,7 +42,7 @@ class qcm_generator {
         ][$difficulty] ?? 'medium';
 
         // Smart chunking: split content into sections for balanced coverage.
-        $content_chunks = self::smart_chunk($content, 15000);
+        $content_chunks = self::smart_chunk($content, 6000);
 
         // Distribute questions across types.
         $distribution = $this->distribute_questions($numquestions, $qtypes);
@@ -342,7 +342,7 @@ class qcm_generator {
                 ['role' => 'user', 'content' => $user],
             ],
             'temperature' => $temperature,
-            'max_tokens' => 4000,
+            'max_tokens' => 2000,
         ], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
 
         $ch = curl_init($this->endpoint);
