@@ -354,7 +354,7 @@ class qcm_generator {
                 'Content-Type: application/json',
                 'Authorization: Bearer ' . $this->apikey,
             ],
-            CURLOPT_TIMEOUT => 300,
+            CURLOPT_TIMEOUT => 600,
             CURLOPT_CONNECTTIMEOUT => 30,
         ]);
 
