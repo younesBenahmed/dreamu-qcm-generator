@@ -141,10 +141,97 @@ class qcm_generator {
                 $q->verification_note = 'Erreur de verification: ' . $e->getMessage();
             }
 
+            // Extra check for numerical questions: verify math if calculation steps are shown.
+            if ($q->qtype === 'numerical' && !empty($q->explanation)) {
+                $math_check = $this->verify_math($q);
+                if ($math_check !== null) {
+                    if (!$math_check['valid']) {
+                        $q->verified = 0;
+                        $q->verification_note = ($q->verification_note ? $q->verification_note . ' | ' : '')
+                            . 'Erreur de calcul : ' . $math_check['reason'];
+                    }
+                }
+            }
+
             $verified[] = $q;
         }
 
         return $verified;
+    }
+
+    /**
+     * Verify arithmetic in numerical questions by extracting and evaluating math expressions.
+     * Returns null if no verifiable math found, or ['valid' => bool, 'reason' => string].
+     */
+    private function verify_math(object $q): ?array {
+        $answer = floatval($q->correct);
+        $text = $q->question . ' ' . ($q->explanation ?? '');
+
+        // Try to find patterns like "= NUMBER" at the end of a calculation chain.
+        // Pattern: (A + B) / C = RESULT  or  A / B = RESULT
+        $patterns = [
+            // (X + Y) / Z = R
+            '/\((\d+(?:\.\d+)?)\s*\+\s*(\d+(?:\.\d+)?)\)\s*\/\s*(\d+(?:\.\d+)?)\s*=\s*(\d+(?:\.\d+)?)/',
+            // (X - Y) / Z = R
+            '/\((\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\)\s*\/\s*(\d+(?:\.\d+)?)\s*=\s*(\d+(?:\.\d+)?)/',
+            // X + Y = R
+            '/(\d+(?:\.\d+)?)\s*\+\s*(\d+(?:\.\d+)?)\s*=\s*(\d+(?:\.\d+)?)/',
+            // X / Y = R
+            '/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\s*=\s*(\d+(?:\.\d+)?)/',
+            // X * Y = R
+            '/(\d+(?:\.\d+)?)\s*\*\s*(\d+(?:\.\d+)?)\s*=\s*(\d+(?:\.\d+)?)/',
+        ];
+
+        foreach ($patterns as $i => $pat) {
+            if (preg_match_all($pat, $text, $matches, PREG_SET_ORDER)) {
+                foreach ($matches as $m) {
+                    $expected = null;
+                    $stated = null;
+
+                    if ($i <= 1 && count($m) >= 5) {
+                        // (A op B) / C = R
+                        $a = floatval($m[1]);
+                        $b = floatval($m[2]);
+                        $c = floatval($m[3]);
+                        $stated = floatval($m[4]);
+                        if ($c != 0) {
+                            $inner = ($i === 0) ? ($a + $b) : ($a - $b);
+                            $expected = $inner / $c;
+                        }
+                    } elseif (count($m) >= 4) {
+                        // A op B = R
+                        $a = floatval($m[1]);
+                        $b = floatval($m[2]);
+                        $stated = floatval($m[3]);
+                        if ($i === 2) $expected = $a + $b;
+                        elseif ($i === 3 && $b != 0) $expected = $a / $b;
+                        elseif ($i === 4) $expected = $a * $b;
+                    }
+
+                    if ($expected !== null && $stated !== null) {
+                        if (abs($expected - $stated) > 0.01) {
+                            return [
+                                'valid' => false,
+                                'reason' => "Le calcul indique {$m[0]} mais le resultat correct est " . round($expected, 4),
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also verify the final answer matches any "= ANSWER" in the explanation.
+        if (preg_match('/=\s*(\d+(?:\.\d+)?)\s*$/', trim($q->explanation ?? ''), $finalm)) {
+            $final = floatval($finalm[1]);
+            if (abs($final - $answer) > ($q->tolerance ?? 0.01)) {
+                return [
+                    'valid' => false,
+                    'reason' => "L'explication conclut a {$final} mais la reponse indiquee est {$answer}",
+                ];
+            }
+        }
+
+        return null;
     }
 
     /**

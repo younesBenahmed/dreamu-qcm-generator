@@ -275,7 +275,7 @@ foreach ($sessions as $si => $session) {
 
         // Show verification warning if question failed verification.
         if (isset($q->verified) && $q->verified !== null && $q->verified !== '' && (int)$q->verified === 0 && !empty($q->verification_note)) {
-            echo '<div class="alert alert-danger mt-2 mb-2 py-1 px-2"><small><strong>Probl&egrave;me de v&eacute;rification :</strong> ' . format_string($q->verification_note) . '</small></div>';
+            echo '<div class="alert alert-warning mt-2 mb-2 py-1 px-2"><small><strong>Avis du v&eacute;rificateur :</strong> ' . format_string($q->verification_note) . ' <em>(V&eacute;rifiez et corrigez si n&eacute;cessaire avant d\'approuver)</em></small></div>';
         }
 
         if (!empty($q->explanation)) {
