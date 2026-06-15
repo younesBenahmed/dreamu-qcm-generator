@@ -86,6 +86,19 @@ if ($confirm && confirm_sesskey()) {
     // Insert quiz record.
     $quizdata->id = $DB->insert_record('quiz', $quizdata);
 
+    // Create the default quiz section. quiz_add_instance() normally does this;
+    // since we insert the quiz record directly, we must create it ourselves.
+    // Without a quiz_sections row the quiz structure has no section, so slots are
+    // never iterated and attempts fail with "Aucune question trouvee".
+    if (!$DB->record_exists('quiz_sections', ['quizid' => $quizdata->id])) {
+        $DB->insert_record('quiz_sections', (object) [
+            'quizid' => $quizdata->id,
+            'firstslot' => 1,
+            'heading' => '',
+            'shufflequestions' => 0,
+        ]);
+    }
+
     // Create course module via API.
     $module = $DB->get_record('modules', ['name' => 'quiz'], '*', MUST_EXIST);
 
